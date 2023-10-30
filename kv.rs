@@ -14,7 +14,7 @@ verus! {
 
     impl<K,V> GhostMapAuth<K,V> {
         #[verifier(external_body)]
-        fn agree(tracked &self, Tracked(ptsto):Tracked<&GhostMapPointsTo<K,V>>)
+        proof fn agree(tracked &self, tracked ptsto:&GhostMapPointsTo<K,V>)
             requires ptsto.id == self.id
             ensures
                 self.kvs.contains_key(ptsto.k),
@@ -53,18 +53,6 @@ verus! {
         )
     }
 
-    // pub open spec fn equal_for_key(m1:Map<u64,u64>, m2:Map<u64,u64>, k:u64) -> bool {
-        // (m1.contains_key(k) <==> m2.contains_key(k)) &&
-        // m1[k] == m2[k]
-    // }
-
-    // pub proof fn equal_for_key_trans(m1:Map<u64,u64>, m2:Map<u64,u64>, m3:Map<u64,u64>, k:u64)
-        // requires equal_for_key(m1,m2,k),
-                 // equal_for_key(m2,m3,k)
-        // ensures equal_for_key(m1,m3,k)
-    // {
-    // }
-
 
     fn example(Tracked(x): Tracked<&mut u64>)
     {
@@ -96,12 +84,7 @@ verus! {
             self.putOps.push((k,v));
             proof {
                 self.ghostKvs.update(v, ptsto);
-                // assert(self.ghostKvs.kvs == oldMap.insert(ptsto.k, v));
-
-                // lemma_seq_properties::<(u64,u64)>();
                 assert_seqs_equal!(self.putOps@.drop_last() == oldPuts);
-                // assert(computeMap(self.putOps@) == oldMap.insert(k,v));
-                // assert(oldMap.insert(k,v) == self.ghostKvs.kvs);
             }
         }
 
@@ -113,12 +96,11 @@ verus! {
             ensures (ptsto.v == result)
         {
             let mut i = 0;
-            self.ghostKvs.agree(Tracked(ptsto));
             proof {
                 // This ensures that k shows up in the map, which helps show that the
                 // "assert" is unreachable.
+                self.ghostKvs.agree(ptsto);
             }
-            // let ghost putOps = self.putOps;
             let ghost putSeq : Seq<(u64,u64)> = self.putOps@;
             let ghost n = (putSeq.len() as int);
 
@@ -127,11 +109,6 @@ verus! {
                 // automatically? The body of this lemma is empty, and it
                 // doesn't seem like there's anything being triggered by it.
                 lemma_seq_skip_nothing(self.putOps@, 0);
-                // lemma_seq_properties::<(u64,u64)>();
-                // assert(self.opsSeq.subrange(0,self.opsSeq.len() as int) == self.opsSeq);
-                // assert(self.opsSeq.take(n) == self.opsSeq);
-                // assert(self.opsSeq.take(n-i) == self.opsSeq);
-                // assert(self.ghostKvs.kvs == computeMap(self.opsSeq.take(n-i)));
             }
 
             assert(self.putOps.len() as int == n);
@@ -150,52 +127,22 @@ verus! {
             {
                 let op = self.putOps[self.putOps.len() - 1 - i];
                 if op.0 == k {
-                    self.ghostKvs.agree(Tracked(ptsto));
                     proof {
+                        self.ghostKvs.agree(ptsto);
                         assert_seqs_equal!(self.putOps@.take(n-i).drop_last() == self.putOps@.take(n-i-1));
                         assert (computeMap(self.putOps@.take(n-i)) ==
                                 computeMap(self.putOps@.take(n-i-1)).insert(op.0,op.1));
-                        assert(self.ghostKvs.kvs[op.0] == op.1);
-                        assert(self.ghostKvs.kvs[op.0] == op.1);
-                        assert(ptsto.v == op.1);
                     }
                     return op.1
                 }
 
-                // proof {
-                    // assert(putSeq.len() as int == n);
-                    // assert(self.putOps.len() == self.putOps@.len());
-                    // assert(self.putOps@.len() as int == n);
-                    // assert(self.putOps.len() as int == n);
-                    // assert(i < self.putOps.len());
-                    // assert(i < n);
-                // }
                 proof {
-                    // lemma_seq_properties::<(u64,u64)>();
-                    //assert (self.putOps@.take(n-i) == self.putOps@.take(n-i-1) + seq![(op.0,op.1)]);
-                    // assert(self.putOps@.take(n-i).last() == op);
                     assert_seqs_equal!(self.putOps@.take(n-i).drop_last() == self.putOps@.take(n-i-1));
-
-                    // assert (computeMap(self.putOps@.take(n-i)) ==
-                            // computeMap(self.putOps@.take(n-i-1)).insert(op.0,op.1));
-                    // assert (op.0 != k);
-                    // let ghost m1 = computeMap(self.putOps@.take(n-i-1));
-                    // let ghost m2 = computeMap(self.putOps@.take(n-i-1)).insert(op.0,op.1);
-                    // if m1.contains_key(k) {
-                        // assert(m2.contains_key(k));
-                        // assert(m2[k] == m1[k]);
-                    // }
-                    // if m2.contains_key(k) {
-                        // assert(m1.contains_key(k));
-                        // assert(m2[k] == m1[k]);
-                    // }
-                    // assert (equal_for_key(m1,m2,k));
                 }
                 i += 1;
             }
             assert(false);
             0
-            // panic!("unreachable");
         }
     }
 
