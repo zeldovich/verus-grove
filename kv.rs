@@ -20,38 +20,17 @@ verus! {
                 self.kvs.contains_key(ptsto.k),
                 self.kvs[ptsto.k] == ptsto.v
         {}
-        
-        #[verifier(external_body)]
-        fn update(tracked &mut self, v:V, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<K,V>>)
-            requires old(ptsto).id == old(self).id
-            ensures
-                self.kvs.contains_key(ptsto.k),
-                ptsto.v == v,
-                old(self).id == self.id == ptsto.id,
-        {}
 
         #[verifier(external_body)]
-        proof fn update2(tracked &mut self, v:V, tracked ptsto:&mut GhostMapPointsTo<K,V>)
+        proof fn update(tracked &mut self, v:V, tracked ptsto:&mut GhostMapPointsTo<K,V>)
             requires old(ptsto).id == old(self).id
-            ensures
-                self.kvs.contains_key(ptsto.k),
-                ptsto.v == v,
-                old(self).id == self.id == ptsto.id,
-        {}
-
-        #[verifier(external_body)]
-        proof fn update3(tracked &mut self, v:V, tracked ptsto:GhostMapPointsTo<K,V>)
-                         -> (tracked new_ptsto:GhostMapPointsTo<K,V>)
-            requires ptsto.id == old(self).id
             ensures
                 self.kvs == old(self).kvs.insert(ptsto.k, v),
                 self.kvs.contains_key(ptsto.k),
-                new_ptsto.v == v,
-                new_ptsto.k == ptsto.k,
-                old(self).id == self.id == ptsto.id == new_ptsto.id,
-        {
-            unimplemented!();
-        }
+                ptsto.v == v,
+                ptsto.k == old(ptsto).k,
+                old(self).id == self.id == ptsto.id,
+        {}
 
         // #[verifier(external_body)]
         // proof fn new() -> (r:GhostMapAuth<K,V>)
@@ -102,47 +81,27 @@ verus! {
             computeMap(self.putOps@) == self.ghostKvs.kvs
         }
 
-        /**
         fn put(&mut self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
                 old(ptsto).id == old(self).ghostKvs.id,
                 old(ptsto).k == k,
                 old(self).inv(),
             ensures ptsto.v == v,
-                    old(self).ghostKvs.id == self.ghostKvs.id == ptsto.id,
-                    self.inv(),
-        {
-            self.putOps.push((k,v));
-            proof {
-                let mut x = self.ghostKvs;
-                // let tracked x = x.tracked_remove
-                x.update3(v, ptsto.get());
-            }
-        }*/
-
-        fn put2(&mut self, k:u64, v:u64, tracked ptsto:GhostMapPointsTo<u64,u64>)
-            requires
-                ptsto.id == old(self).ghostKvs.id,
-                ptsto.k == k,
-                old(self).inv(),
-            ensures //ptsto.v == v,
+                    ptsto.k == old(ptsto).k,
                     old(self).ghostKvs.id == self.ghostKvs.id == ptsto.id,
                     self.inv(),
         {
             let ghost oldMap = self.ghostKvs.kvs;
             let ghost oldPuts = self.putOps@;
             self.putOps.push((k,v));
-            let tracked mut new_ptsto = GhostMapPointsTo{id:ptsto.id, k:0u64, v:0u64};
             proof {
-                // let mut x = self.ghostKvs;
-                // let tracked x = x.tracked_remove
-                new_ptsto = self.ghostKvs.update3(v, ptsto);
+                self.ghostKvs.update(v, ptsto);
+                // assert(self.ghostKvs.kvs == oldMap.insert(ptsto.k, v));
 
-                // FIXME: reprove the inv
+                // lemma_seq_properties::<(u64,u64)>();
                 assert_seqs_equal!(self.putOps@.drop_last() == oldPuts);
-                assert(computeMap(self.putOps@) == oldMap.insert(k,v));
-                assert(computeMap(self.putOps@) == self.ghostKvs.kvs);
-                // return new_ptsto;
+                // assert(computeMap(self.putOps@) == oldMap.insert(k,v));
+                // assert(oldMap.insert(k,v) == self.ghostKvs.kvs);
             }
         }
 
