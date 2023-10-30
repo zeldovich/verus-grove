@@ -32,12 +32,12 @@ verus! {
                 old(self).id == self.id == ptsto.id,
         {}
 
-        // #[verifier(external_body)]
-        // proof fn new() -> (r:GhostMapAuth<K,V>)
-            // ensures 
-                // r.kvs.len() == 0
-        // {
-        // }
+        #[verifier(external_body)]
+        proof fn new() -> (tracked r:GhostMapAuth<K,V>)
+            ensures r.kvs.len() == 0
+        {
+            unimplemented!();
+        }
     }
 
     // Single node in the list
@@ -53,23 +53,13 @@ verus! {
         )
     }
 
-
-    fn example(Tracked(x): Tracked<&mut u64>)
-    {
-    }
-
-    fn test() {
-        let tracked mut u64 = 0u64;
-
-        example(Tracked(&mut u64));
-    }
-
     impl KvServer {
         spec fn inv(self) -> bool {
             computeMap(self.putOps@) == self.ghostKvs.kvs
         }
 
-        fn put(&mut self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
+        // XXX Hypothesis: the last parameter is identical to "Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>"
+        fn put(&mut self, k:u64, v:u64, tracked ptsto:&mut GhostMapPointsTo<u64,u64>)
             requires
                 old(ptsto).id == old(self).ghostKvs.id,
                 old(ptsto).k == k,
