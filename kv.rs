@@ -38,13 +38,24 @@ verus! {
         {
             unimplemented!();
         }
+
+        #[verifier(external_body)]
+        proof fn insert(tracked &mut self, k:K, v:V) -> (tracked ptsto:GhostMapPointsTo<K,V>)
+            requires !old(self).kvs.contains_key(k)
+            ensures self.kvs == old(self).kvs.insert(k,v),
+                    self.id == old(self).id,
+                    ptsto.id == self.id,
+                    ptsto.k == k,
+                    ptsto.v == v,
+        {
+            unimplemented!();
+        }
     }
 
     // Single node in the list
     struct KvServer {
         putOps: Vec<(u64, u64)>,
         tracked ghostKvs: GhostMapAuth<u64, u64>,
-        id: nat,
     }
 
     spec fn computeMap(ops:Seq<(u64,u64)>) -> Map<u64,u64> {
@@ -56,6 +67,22 @@ verus! {
     impl KvServer {
         spec fn inv(self) -> bool {
             computeMap(self.putOps@) == self.ghostKvs.kvs
+        }
+
+        // FIXME: how to use proof state as part of initializing the physical struct?
+        // Maybe use Tracked<X>?
+        fn mk() -> (KvServer, GhostMapPointsTo<u64,u64>, GhostMapPointsTo<u64,u64>)
+        {
+            proof {
+                let authKvs = GhostMapAuth::new(); 
+                let ptstoA = authKvs.insert(0u64,0u64);
+                let ptstoB = authKvs.insert(1u64,0u64);
+            }
+            let k = KvServer{
+                putOps: Vec::new(),
+                ghostKvs: authKvs,
+            };
+            // proof { (k, ptstoA, ptstoB) }
         }
 
         // XXX Hypothesis: the last parameter is identical to "Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>"
