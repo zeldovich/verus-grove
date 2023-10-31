@@ -221,6 +221,9 @@ verus! {
         }
 
 
+        // FIXME: require something about the ptsto.id matching up the server-side id.
+        // Ideally, want the lock predicate to take the const id as input. Look
+        // at InvariantPredicate to see how that's done.
         fn get(&self, k:u64, Tracked(ptsto):Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
                 // ptsto_in@.id == self.ghostKvs@.id,
@@ -233,6 +236,7 @@ verus! {
             return v;
         }
 
+        // FIXME: require something about the ptsto.id matching up the server-side id
         fn put(&self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
                 // old(ptsto).id == old(self).ghostKvs@.id,
