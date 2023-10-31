@@ -1,17 +1,31 @@
-use vstd::{prelude::*};
+use vstd::{prelude::*,atomic::*,invariant::*};
 
 verus! {
-    // pub trait Predicate<A> {
-    //     spec fn pred(a: A) -> bool;
-    // }
+
+    enum LockResources<A> {
+        Locked(Tracked<PermissionU64>, A),
+        Unlocked(Tracked<PermissionU64>)
+    }
+    struct LockInv<A> {
+        x: std::marker::PhantomData<A>,
+    }
+
+    impl<A> InvariantPredicate<(), A> for LockInv<A>
+    {
+        open spec fn inv(k:(), a:A) -> bool {
+            true
+        }
+    }
 
     #[verifier::external_body]
     pub struct Lock< #[verifier::reject_recursive_types] A> {
-        // mu: Arc<Mutex<A>>
-        phantom: core::marker::PhantomData<A>,
+        // phantom: core::marker::PhantomData<A>,
+        // FIXME: going to run into trouble with having physical resources A
+        // inside the AtomicInvariant.
+        atomic_inv: AtomicInvariant<(), LockResources<A>, LockInv<LockResources<A>>>,
+        locked: PAtomicU64,
     }
 
-    // FIXME: implement this so the code is runnable
     impl<A> Lock<A> {
 
         pub spec fn getPred(self) -> FnSpec(A) -> bool;

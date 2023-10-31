@@ -5,13 +5,13 @@ mod kv;
 use kv::*;
 
 verus! {
-    spec fn predGen(id:nat) -> FnSpec(KvState) -> bool {
-        |s:KvState| s.get_id() == id && s.kv_inv()
-    }
-
     struct KvServer {
         s: lock::Lock<KvState>,
         id: Ghost<nat>,
+    }
+
+    spec fn predGen(id:nat) -> FnSpec(KvState) -> bool {
+        |s:KvState| s.get_id() == id && s.kv_inv()
     }
 
     impl KvServer {
@@ -23,9 +23,8 @@ verus! {
                           Tracked<GhostMapPointsTo<u64,u64>>,
                           Tracked<GhostMapPointsTo<u64,u64>>))
             ensures 
-                    (ret.0.id@ == ret.1@.id == ret.2@.id),
-                    (ret.1@.k == 0), (ret.2@.k == 1),
-                    (ret.1@.v == ret.2@.v == 0),
+                    (ret.1@ == GhostMapPointsTo{k:0u64, v:0u64, id:ret.0.id@}),
+                    (ret.2@ == GhostMapPointsTo{k:1u64, v:0u64, id:ret.0.id@}),
                     ret.0.inv(),
         {
             let r = KvState::new();
@@ -38,10 +37,6 @@ verus! {
                     ptstoA, ptstoB)
         }
 
-
-        // FIXME: require something about the ptsto.id matching up the server-side id.
-        // Ideally, want the lock predicate to take the const id as input. Look
-        // at InvariantPredicate to see how that's done.
         fn get(&self, k:u64, Tracked(ptsto):Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
                 self.inv(),
@@ -56,15 +51,13 @@ verus! {
             return v;
         }
 
-        // FIXME: require something about the ptsto.id matching up the server-side id
         fn put(&self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
                 self.inv(),
                 old(ptsto).id == self.id@,
                 old(ptsto).k == k,
-            ensures ptsto.v == v,
-                    ptsto.k == old(ptsto).k,
-                    self.id@ == ptsto.id,
+
+            ensures (ptsto == GhostMapPointsTo{k:k, v:v, id:self.id@}),
         {
             let mut a = self.s.lock();
             a.put(k, v, Tracked(ptsto));
