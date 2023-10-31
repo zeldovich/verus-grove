@@ -2,14 +2,14 @@ use vstd::{prelude::*,seq_lib::*};
 
 verus! {
     pub struct GhostMapAuth<#[verifier::reject_recursive_types] K,V> {
-        id:nat,
-        kvs:Map<K,V>,
+        pub id:nat,
+        pub kvs:Map<K,V>,
     }
 
     pub struct GhostMapPointsTo<K,V> {
-        id:nat,
-        k:K,
-        v:V,
+        pub id:nat,
+        pub k:K,
+        pub v:V,
     }
 
     impl<K,V> GhostMapAuth<K,V> {
@@ -53,13 +53,14 @@ verus! {
         }
     }
 
-    // Single node in the list
-    struct KvServer {
-        putOps: Vec<(u64, u64)>,
-        ghostKvs: Tracked<GhostMapAuth<u64, u64>>,
+
+    pub struct KvState {
+        pub putOps: Vec<(u64, u64)>,
+        pub ghostKvs: Tracked<GhostMapAuth<u64, u64>>, // FIXME: don't make this `pub`
+        // Add a spec fn to return the id, and write invariant about it
     }
 
-    pub open spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
+    spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
         if m.contains_key(k) {
             m[k]
         }
@@ -78,12 +79,12 @@ verus! {
         )
     }
 
-    impl KvServer {
-        spec fn kv_inv(self) -> bool {
+    impl KvState {
+        pub closed spec fn kv_inv(self) -> bool {
             gauge_eq(compute_map(self.putOps@), self.ghostKvs@.kvs)
         }
 
-        fn mk() -> (ret:(KvServer, Tracked<GhostMapPointsTo<u64,u64>>, Tracked<GhostMapPointsTo<u64,u64>>))
+        pub fn new() -> (ret:(KvState, Tracked<GhostMapPointsTo<u64,u64>>, Tracked<GhostMapPointsTo<u64,u64>>))
             ensures 
                     (ret.0).kv_inv(),
                     (ret.0.ghostKvs@.id == ret.1@.id),
@@ -95,7 +96,7 @@ verus! {
             let tracked mut authKvs = GhostMapAuth::new(); 
             let tracked mut ptstoA = authKvs.insert(0u64,0u64);
             let tracked mut ptstoB = authKvs.insert(1u64,0u64);
-            let k = KvServer{
+            let k = KvState{
                 putOps: Vec::new(),
                 ghostKvs: Tracked(authKvs),
             };
@@ -103,7 +104,7 @@ verus! {
             (k, Tracked(ptstoA), Tracked(ptstoB))
         }
 
-        fn put(&mut self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
+        pub fn put(&mut self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
                 old(ptsto).id == old(self).ghostKvs@.id,
                 old(ptsto).k == k,
@@ -131,7 +132,7 @@ verus! {
             }
         }
 
-        fn get(&self, k:u64, ptsto_in:Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
+        pub fn get(&self, k:u64, ptsto_in:Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
                 self.kv_inv(),
                 ptsto_in@.id == self.ghostKvs@.id,
@@ -190,7 +191,7 @@ verus! {
     }
 
     fn main() {
-        let r = KvServer::mk();
+        let r = KvState::new();
         let mut kv = r.0;
         let mut ptstoA = r.1;
         let mut ptstoB = r.2;
