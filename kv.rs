@@ -55,9 +55,8 @@ verus! {
 
 
     pub struct KvState {
-        pub putOps: Vec<(u64, u64)>,
-        pub ghostKvs: Tracked<GhostMapAuth<u64, u64>>, // FIXME: don't make this `pub`
-        // Add a spec fn to return the id, and write invariant about it
+        putOps: Vec<(u64, u64)>,
+        ghostKvs: Tracked<GhostMapAuth<u64, u64>>,
     }
 
     spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
@@ -80,6 +79,10 @@ verus! {
     }
 
     impl KvState {
+        pub closed spec fn get_id(self) -> nat {
+            self.ghostKvs@.id
+        }
+
         pub closed spec fn kv_inv(self) -> bool {
             gauge_eq(compute_map(self.putOps@), self.ghostKvs@.kvs)
         }
@@ -87,8 +90,7 @@ verus! {
         pub fn new() -> (ret:(KvState, Tracked<GhostMapPointsTo<u64,u64>>, Tracked<GhostMapPointsTo<u64,u64>>))
             ensures 
                     (ret.0).kv_inv(),
-                    (ret.0.ghostKvs@.id == ret.1@.id),
-                    (ret.0.ghostKvs@.id == ret.2@.id),
+                    (ret.0.get_id() == ret.1@.id == ret.2@.id),
                     (ret.1@.k == 0),
                     (ret.2@.k == 1),
                     (ret.1@.v == ret.2@.v == 0)
@@ -106,12 +108,12 @@ verus! {
 
         pub fn put(&mut self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
-                old(ptsto).id == old(self).ghostKvs@.id,
+                old(ptsto).id == old(self).get_id(),
                 old(ptsto).k == k,
                 old(self).kv_inv(),
             ensures ptsto.v == v,
                     ptsto.k == old(ptsto).k,
-                    old(self).ghostKvs@.id == self.ghostKvs@.id == ptsto.id,
+                    old(self).get_id() == self.get_id() == ptsto.id,
                     self.kv_inv(),
         {
             let ghost oldMap = self.ghostKvs@.kvs;
@@ -135,7 +137,7 @@ verus! {
         pub fn get(&self, k:u64, ptsto_in:Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
                 self.kv_inv(),
-                ptsto_in@.id == self.ghostKvs@.id,
+                ptsto_in@.id == self.get_id(),
                 ptsto_in@.k == k,
             ensures (ptsto_in@.v == result)
         {

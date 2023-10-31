@@ -6,7 +6,7 @@ use kv::*;
 
 verus! {
     spec fn predGen(id:nat) -> FnSpec(KvState) -> bool {
-        |s:KvState| s.ghostKvs@.id == id && s.kv_inv()
+        |s:KvState| s.get_id() == id && s.kv_inv()
     }
 
     struct KvServer {
@@ -32,7 +32,7 @@ verus! {
             let mut kv = r.0;
             let mut ptstoA = r.1;
             let mut ptstoB = r.2;
-            let ghost id = kv.ghostKvs@.id;
+            let ghost id = kv.get_id();
             return (KvServer{ id: Ghost(id),
                               s: lock::Lock::<KvState>::new(kv, Ghost(predGen(id))) },
                     ptstoA, ptstoB)
