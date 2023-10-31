@@ -34,7 +34,8 @@ verus! {
 
         #[verifier(external_body)]
         proof fn new() -> (tracked r:GhostMapAuth<K,V>)
-            ensures r.kvs.len() == 0
+            ensures r.kvs == Map::<K,V>::empty()
+
         {
             unimplemented!();
         }
@@ -55,68 +56,94 @@ verus! {
     // Single node in the list
     struct KvServer {
         putOps: Vec<(u64, u64)>,
-        tracked ghostKvs: GhostMapAuth<u64, u64>,
+        ghostKvs: Tracked<GhostMapAuth<u64, u64>>,
     }
 
-    spec fn computeMap(ops:Seq<(u64,u64)>) -> Map<u64,u64> {
+    pub open spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
+        if m.contains_key(k) {
+            m[k]
+        }
+        else {
+            0u64
+        }
+    }
+
+    spec fn gauge_eq(m1:Map<u64,u64>, m2:Map<u64,u64>) -> bool {
+        forall|k:u64| lookup(m1, k) == lookup(m2, k)
+    }
+
+    spec fn compute_map(ops:Seq<(u64,u64)>) -> Map<u64,u64> {
         ops.fold_left(Map::empty(),
                       (|m:Map<u64,u64>, op:(u64,u64)| m.insert(op.0, op.1))
         )
     }
 
     impl KvServer {
-        spec fn inv(self) -> bool {
-            computeMap(self.putOps@) == self.ghostKvs.kvs
+        spec fn kv_inv(self) -> bool {
+            gauge_eq(compute_map(self.putOps@), self.ghostKvs@.kvs)
         }
 
-        // FIXME: how to use proof state as part of initializing the physical struct?
-        // Maybe use Tracked<X>?
-        fn mk() -> (KvServer, GhostMapPointsTo<u64,u64>, GhostMapPointsTo<u64,u64>)
+        fn mk() -> (ret:(KvServer, Tracked<GhostMapPointsTo<u64,u64>>, Tracked<GhostMapPointsTo<u64,u64>>))
+            ensures 
+                    (ret.0).kv_inv(),
+                    (ret.0.ghostKvs@.id == ret.1@.id),
+                    (ret.0.ghostKvs@.id == ret.2@.id),
+                    (ret.1@.k == 0),
+                    (ret.2@.k == 1),
+                    (ret.1@.v == ret.2@.v == 0)
         {
-            proof {
-                let authKvs = GhostMapAuth::new(); 
-                let ptstoA = authKvs.insert(0u64,0u64);
-                let ptstoB = authKvs.insert(1u64,0u64);
-            }
+            let tracked mut authKvs = GhostMapAuth::new(); 
+            let tracked mut ptstoA = authKvs.insert(0u64,0u64);
+            let tracked mut ptstoB = authKvs.insert(1u64,0u64);
             let k = KvServer{
                 putOps: Vec::new(),
-                ghostKvs: authKvs,
+                ghostKvs: Tracked(authKvs),
             };
-            // proof { (k, ptstoA, ptstoB) }
+            assert(k.kv_inv());
+            (k, Tracked(ptstoA), Tracked(ptstoB))
         }
 
-        // XXX Hypothesis: the last parameter is identical to "Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>"
-        fn put(&mut self, k:u64, v:u64, tracked ptsto:&mut GhostMapPointsTo<u64,u64>)
+        fn put(&mut self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
-                old(ptsto).id == old(self).ghostKvs.id,
+                old(ptsto).id == old(self).ghostKvs@.id,
                 old(ptsto).k == k,
-                old(self).inv(),
+                old(self).kv_inv(),
             ensures ptsto.v == v,
                     ptsto.k == old(ptsto).k,
-                    old(self).ghostKvs.id == self.ghostKvs.id == ptsto.id,
-                    self.inv(),
+                    old(self).ghostKvs@.id == self.ghostKvs@.id == ptsto.id,
+                    self.kv_inv(),
         {
-            let ghost oldMap = self.ghostKvs.kvs;
+            let ghost oldMap = self.ghostKvs@.kvs;
             let ghost oldPuts = self.putOps@;
             self.putOps.push((k,v));
             proof {
-                self.ghostKvs.update(v, ptsto);
+                // let tracked x = self.ghostKvs.borrow_mut();
+                (self.ghostKvs.borrow_mut()).update(v, ptsto);
                 assert_seqs_equal!(self.putOps@.drop_last() == oldPuts);
+
+                let m1 = compute_map(self.putOps@);
+                let m2 = self.ghostKvs@.kvs;
+                assert (lookup(m1, k) == lookup(m2, k));
+
+                assert (forall|somek:u64| somek != k ==>  #[trigger] lookup(m2, somek) == lookup(oldMap, somek));
+                assert (forall|somek:u64| somek != k ==>  #[trigger] lookup(m1, somek) == lookup(m2, somek));
+                // assert(gauge_eq( 
             }
         }
 
-        fn get(&self, k:u64, tracked ptsto:&GhostMapPointsTo<u64,u64>) -> (result:u64)
+        fn get(&self, k:u64, ptsto_in:Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
-                self.inv(),
-                ptsto.id == self.ghostKvs.id,
-                ptsto.k == k,
-            ensures (ptsto.v == result)
+                self.kv_inv(),
+                ptsto_in@.id == self.ghostKvs@.id,
+                ptsto_in@.k == k,
+            ensures (ptsto_in@.v == result)
         {
             let mut i = 0;
+            let tracked ptsto = ptsto_in.get();
             proof {
                 // This ensures that k shows up in the map, which helps show that the
                 // "assert" is unreachable.
-                self.ghostKvs.agree(ptsto);
+                (self.ghostKvs.borrow()).agree(ptsto);
             }
             let ghost putSeq : Seq<(u64,u64)> = self.putOps@;
             let ghost n = (putSeq.len() as int);
@@ -134,21 +161,21 @@ verus! {
                     // FIXME: why do the first three clauses need to be in the
                     // loop invariant? Especially the third, which is a pure
                     // mathematical statement.
-                    ptsto.id == self.ghostKvs.id,
+                    ptsto.id == self.ghostKvs@.id,
                     ptsto.k == k,
                     putSeq.len() as int == n,
                     i <= n,
                     self.putOps@ == putSeq,
-                    self.ghostKvs.kvs.is_equal_on_key(computeMap(self.putOps@.take(n-i)),
-                                k),
+                    lookup(self.ghostKvs@.kvs, k) == lookup(compute_map(self.putOps@.take(n-i)), k),
+                    ptsto_in@ == ptsto
             {
                 let op = self.putOps[self.putOps.len() - 1 - i];
                 if op.0 == k {
                     proof {
-                        self.ghostKvs.agree(ptsto);
+                        (self.ghostKvs.borrow()).agree(ptsto);
                         assert_seqs_equal!(self.putOps@.take(n-i).drop_last() == self.putOps@.take(n-i-1));
-                        assert (computeMap(self.putOps@.take(n-i)) ==
-                                computeMap(self.putOps@.take(n-i-1)).insert(op.0,op.1));
+                        assert (compute_map(self.putOps@.take(n-i)) ==
+                                compute_map(self.putOps@.take(n-i-1)).insert(op.0,op.1));
                     }
                     return op.1
                 }
@@ -158,12 +185,24 @@ verus! {
                 }
                 i += 1;
             }
-            assert(false);
             0
         }
     }
 
     fn main() {
+        let r = KvServer::mk();
+        let mut kv = r.0;
+        let mut ptstoA = r.1;
+        let mut ptstoB = r.2;
+
+        let r = kv.get(0, Tracked(ptstoA.borrow()));
+        assert(r == 0);
+
+        kv.put(0, 37, Tracked(ptstoA.borrow_mut()));
+        let r = kv.get(1, Tracked(ptstoB.borrow()));
+        assert(r == 0);
+        let r = kv.get(0, Tracked(ptstoA.borrow()));
+        assert(r == 37);
     }
 
 } // verus!
