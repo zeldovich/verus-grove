@@ -55,12 +55,12 @@ verus! {
         }
     }
 
-    struct KvState {
+    pub struct KvState {
         putOps: Vec<(u64, u64)>,
         ghostKvs: Tracked<GhostMapAuth<u64, u64>>,
     }
 
-    pub open spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
+    spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
         if m.contains_key(k) {
             m[k]
         }
@@ -190,34 +190,38 @@ verus! {
         }
     }
 
-    struct KvInv {}
-
-    impl lock::Predicate<KvState> for KvInv {
-        closed spec fn pred(a:KvState) -> bool {
-            a.kv_inv()
-        }
+    spec fn predGen(id:nat) -> FnSpec(KvState) -> bool {
+        |s:KvState| s.ghostKvs@.id == id && s.kv_inv()
     }
 
     struct KvServer {
-        s: lock::Lock<KvState, KvInv>,
-        // id: nat,
+        s: lock::Lock<KvState>,
+        id: Ghost<nat>,
     }
 
     impl KvServer {
+
+        spec fn inv(self) -> bool {
+            self.s.getPred() == predGen(self.id@)
+        }
+
         fn new() -> (ret:(KvServer,
                           Tracked<GhostMapPointsTo<u64,u64>>,
                           Tracked<GhostMapPointsTo<u64,u64>>))
             ensures 
-                    // (ret.0.ghostKvs@.id == ret.1@.id),
-                    // (ret.0.ghostKvs@.id == ret.2@.id),
+                    (ret.0.id@ == ret.1@.id == ret.2@.id),
                     (ret.1@.k == 0), (ret.2@.k == 1),
-                    (ret.1@.v == ret.2@.v == 0)
+                    (ret.1@.v == ret.2@.v == 0),
+                    ret.0.inv(),
         {
             let r = KvState::new();
             let mut kv = r.0;
             let mut ptstoA = r.1;
             let mut ptstoB = r.2;
-            return (KvServer{ s: lock::Lock::<KvState,KvInv>::new(kv) }, ptstoA, ptstoB)
+            let ghost id = kv.ghostKvs@.id;
+            return (KvServer{ id: Ghost(id),
+                              s: lock::Lock::<KvState>::new(kv, Ghost(predGen(id))) },
+                    ptstoA, ptstoB)
         }
 
 
@@ -226,8 +230,10 @@ verus! {
         // at InvariantPredicate to see how that's done.
         fn get(&self, k:u64, Tracked(ptsto):Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
-                // ptsto_in@.id == self.ghostKvs@.id,
+                self.inv(),
+                ptsto.id == self.id@,
                 ptsto.k == k,
+                
             ensures (ptsto.v == result)
         {
             let mut a = self.s.lock();
@@ -239,11 +245,12 @@ verus! {
         // FIXME: require something about the ptsto.id matching up the server-side id
         fn put(&self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
-                // old(ptsto).id == old(self).ghostKvs@.id,
+                self.inv(),
+                old(ptsto).id == self.id@,
                 old(ptsto).k == k,
             ensures ptsto.v == v,
                     ptsto.k == old(ptsto).k,
-                    // old(self).ghostKvs@.id == self.ghostKvs@.id == ptsto.id,
+                    self.id@ == ptsto.id,
         {
             let mut a = self.s.lock();
             a.put(k, v, Tracked(ptsto));
