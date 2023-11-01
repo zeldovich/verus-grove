@@ -1,5 +1,6 @@
 use vstd::{prelude::*,thread::*,seq_lib::*};
 // use std::sync::Arc;
+use std::collections::HashMap;
 mod lock;
 mod kv;
 use kv::*;
@@ -7,9 +8,7 @@ use kv::*;
 verus! {
     struct KvErpcState {
         kv:KvState,
-        // seenReqIds:Vec<u64>,
-        seenReqIds:KvState, //<u64>,
-        replies:KvState, //<u64>,
+        replies:HashMap<u64,u64>, //<u64>,
         nextFreshReqId:u64,
     }
 
@@ -42,15 +41,16 @@ verus! {
     impl KvErpcServer {
         pub fn get(&self, reqId:u64, k:u64) -> u64 {
             let mut s = self.s.lock();
-            // if contains(s.seenReqIds, reqId) {
-            //     return
-            // }
-            // s.kv
-            if s.seenReqIds.get(reqId) != 0 {
-                return s.replies.get(reqId)
+            match s.replies.get(&reqId) {
+                Some(resp) => {
+                    return *resp;
+                }
+                None => {
+                    s.replies.insert(reqId, 1);
+                    // return s.kv.get(k);
+                    return 1;
+                }
             }
-            s.seenReqIds.put(reqId, 1);
-            return s.kv.get(k);
         }
         
         pub fn put(&self, reqId:u64, k:u64, v:u64) {
@@ -59,11 +59,13 @@ verus! {
             //     return
             // }
             // s.kv
-            if s.seenReqIds.get(reqId) != 0 {
-                return;
+            match s.replies.get(&reqId) {
+                Some(_) => {},
+                None => {
+                    // s.kv.put(k,v);
+                    s.replies.insert(k,0);
+                }
             }
-            s.seenReqIds.put(reqId, 1);
-            s.kv.put(k, v);
             return;
         }
     }
