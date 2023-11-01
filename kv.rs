@@ -1,4 +1,5 @@
 use vstd::{prelude::*,seq_lib::*};
+pub mod lmap;
 
 verus! {
     pub struct GhostMapAuth<#[verifier::reject_recursive_types] K,V> {
@@ -55,7 +56,7 @@ verus! {
 
 
     pub struct KvState {
-        putOps: Vec<(u64, u64)>,
+        m: lmap::LMap<u64, u64>,
         ghostKvs: Tracked<GhostMapAuth<u64, u64>>,
     }
 
@@ -72,19 +73,13 @@ verus! {
         forall|k:u64| lookup(m1, k) == lookup(m2, k)
     }
 
-    spec fn compute_map(ops:Seq<(u64,u64)>) -> Map<u64,u64> {
-        ops.fold_left(Map::empty(),
-                      (|m:Map<u64,u64>, op:(u64,u64)| m.insert(op.0, op.1))
-        )
-    }
-
     impl KvState {
         pub closed spec fn get_id(self) -> nat {
             self.ghostKvs@.id
         }
 
         pub closed spec fn kv_inv(self) -> bool {
-            gauge_eq(compute_map(self.putOps@), self.ghostKvs@.kvs)
+            gauge_eq(self.m@, self.ghostKvs@.kvs)
         }
 
         pub fn new() -> (ret:(KvState, Tracked<GhostMapPointsTo<u64,u64>>, Tracked<GhostMapPointsTo<u64,u64>>))
@@ -99,7 +94,7 @@ verus! {
             let tracked mut ptstoA = authKvs.insert(0u64,0u64);
             let tracked mut ptstoB = authKvs.insert(1u64,0u64);
             let k = KvState{
-                putOps: Vec::new(),
+                m: lmap::LMap::new(),
                 ghostKvs: Tracked(authKvs),
             };
             assert(k.kv_inv());
@@ -116,79 +111,33 @@ verus! {
                     old(self).get_id() == self.get_id() == ptsto.id,
                     self.kv_inv(),
         {
-            let ghost oldMap = self.ghostKvs@.kvs;
-            let ghost oldPuts = self.putOps@;
-            self.putOps.push((k,v));
+            self.m.insert(k,v);
             proof {
-                // let tracked x = self.ghostKvs.borrow_mut();
-                (self.ghostKvs.borrow_mut()).update(v, ptsto);
-                assert_seqs_equal!(self.putOps@.drop_last() == oldPuts);
-
-                let m1 = compute_map(self.putOps@);
-                let m2 = self.ghostKvs@.kvs;
-                assert (lookup(m1, k) == lookup(m2, k));
-
-                assert (forall|somek:u64| somek != k ==>  #[trigger] lookup(m2, somek) == lookup(oldMap, somek));
-                assert (forall|somek:u64| somek != k ==>  #[trigger] lookup(m1, somek) == lookup(m2, somek));
-                // assert(gauge_eq( 
+                (self.ghostKvs.borrow_mut()).update(v,ptsto);
+                assert (forall|somek:u64| somek != k ==>  #[trigger] lookup(self.ghostKvs@.kvs, somek) == lookup(old(self).ghostKvs@.kvs, somek));
             }
         }
 
-        pub fn get(&self, k:u64, ptsto_in:Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
+        pub fn get(&self, k:u64, Tracked(ptsto):Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
                 self.kv_inv(),
-                ptsto_in@.id == self.get_id(),
-                ptsto_in@.k == k,
-            ensures (ptsto_in@.v == result)
+                ptsto.id == self.get_id(),
+                ptsto.k == k,
+            ensures (ptsto.v == result)
         {
-            let mut i = 0;
-            let tracked ptsto = ptsto_in.get();
             proof {
-                // This ensures that k shows up in the map, which helps show that the
-                // "assert" is unreachable.
                 (self.ghostKvs.borrow()).agree(ptsto);
+                assert(lookup(self.m@, k) == lookup(self.ghostKvs@.kvs, k)); // To trigger gauge_eq
             }
-            let ghost putSeq : Seq<(u64,u64)> = self.putOps@;
-            let ghost n = (putSeq.len() as int);
-
-            proof {
-                // FIXME: why doesn't this ("take all == l") get figured out
-                // automatically? The body of this lemma is empty, and it
-                // doesn't seem like there's anything being triggered by it.
-                lemma_seq_skip_nothing(self.putOps@, 0);
-            }
-
-            assert(self.putOps.len() as int == n);
-            while i < self.putOps.len()
-                invariant
-                    // FIXME: why do the first three clauses need to be in the
-                    // loop invariant? Especially the third, which is a pure
-                    // mathematical statement.
-                    ptsto.id == self.ghostKvs@.id,
-                    ptsto.k == k,
-                    putSeq.len() as int == n,
-                    i <= n,
-                    self.putOps@ == putSeq,
-                    lookup(self.ghostKvs@.kvs, k) == lookup(compute_map(self.putOps@.take(n-i)), k),
-                    ptsto_in@ == ptsto
-            {
-                let op = self.putOps[self.putOps.len() - 1 - i];
-                if op.0 == k {
-                    proof {
-                        (self.ghostKvs.borrow()).agree(ptsto);
-                        assert_seqs_equal!(self.putOps@.take(n-i).drop_last() == self.putOps@.take(n-i-1));
-                        assert (compute_map(self.putOps@.take(n-i)) ==
-                                compute_map(self.putOps@.take(n-i-1)).insert(op.0,op.1));
-                    }
-                    return op.1
+            match self.m.get(k) {
+                Some(v) => {
+                    *v
                 }
-
-                proof {
-                    assert_seqs_equal!(self.putOps@.take(n-i).drop_last() == self.putOps@.take(n-i-1));
+                None => {
+                    assume(false);
+                    0u64
                 }
-                i += 1;
             }
-            0
         }
     }
 
