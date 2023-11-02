@@ -1,5 +1,5 @@
-use vstd::{prelude::*,seq_lib::*};
-mod lmap;
+use vstd::{prelude::*};
+pub mod lmap;
 
 verus! {
     pub struct GhostMapAuth<#[verifier::reject_recursive_types] K,V> {

@@ -1,14 +1,14 @@
-use vstd::{prelude::*,thread::*,seq_lib::*};
+use vstd::{prelude::*,thread::*};
 // use std::sync::Arc;
-use std::collections::HashMap;
 mod lock;
 mod kv;
+// mod lmap;
 use kv::*;
 
 verus! {
     struct KvErpcState {
         kv:KvState,
-        replies:HashMap<u64,u64>, //<u64>,
+        replies:lmap::LMap<u64,u64>, //<u64>,
         nextFreshReqId:u64,
     }
 
@@ -41,7 +41,7 @@ verus! {
     impl KvErpcServer {
         pub fn get(&self, reqId:u64, k:u64) -> u64 {
             let mut s = self.s.lock();
-            match s.replies.get(&reqId) {
+            match s.replies.get(reqId) {
                 Some(resp) => {
                     return *resp;
                 }
@@ -59,7 +59,7 @@ verus! {
             //     return
             // }
             // s.kv
-            match s.replies.get(&reqId) {
+            match s.replies.get(reqId) {
                 Some(_) => {},
                 None => {
                     // s.kv.put(k,v);
