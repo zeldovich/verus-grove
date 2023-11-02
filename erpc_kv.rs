@@ -39,7 +39,7 @@ verus! {
     //     return false;
     // }
 
-    
+
     #[verifier(external_body)]
     pub struct GhostToken;
 
@@ -62,7 +62,14 @@ verus! {
     }
 
     #[verifier(external_body)]
-    proof fn token_witness(tracked a:&GhostToken, tracked b:&GhostWitness)
+    proof fn token_freeze(tracked a:GhostToken) -> (tracked b:GhostWitness)
+        ensures a.gname() == b.gname()
+    {
+        unimplemented!();
+    }
+
+    #[verifier(external_body)]
+    proof fn token_witness_false(tracked a:&GhostToken, tracked b:&GhostWitness)
         requires a.gname() == b.gname()
         ensures false
     {
@@ -98,7 +105,8 @@ verus! {
         closed spec fn inv(c: PutInvConsts, r: PutResources) -> bool {
             match r {
                 Or::Left(ptsto) => {
-                    ptsto@.id == c.map_gname
+                    ptsto@.id == c.map_gname &&
+                    ptsto@.k == c.k
                 }
                 Or::Right(wit) => {
                     wit@.gname() == c.tok_gname
@@ -116,7 +124,22 @@ verus! {
         unimplemented!()
     }
 
+    #[verifier(external_body)]
+    proof fn false_pointsto() -> (tracked r:GhostMapPointsTo<u64,u64>)
+        requires false
+    {
+        unimplemented!();
+    }
+
+    spec fn lockPredGen(id:nat) -> FnSpec(KvErpcState) -> bool {
+        |s:KvErpcState| s.kv.get_id() == id && s.kv.kv_inv()
+    }
+
     impl KvErpcServer {
+        pub closed spec fn inv(self) -> bool {
+            self.s.getPred() == lockPredGen(self.id@)
+        }
+
         pub fn get(&self, reqId:u64, k:u64) -> u64 {
             let mut s = self.s.lock();
             match s.replies.get(reqId) {
@@ -135,6 +158,7 @@ verus! {
         // give it back. This'll require "one-way" escrow.
         pub fn put(&self, reqId:u64, k:u64, v:u64, pre:PutPreCond)
             requires
+            self.inv(),
             self.tok_gnames@.contains_key(reqId),
             pre.constant() == (PutInvConsts{
                 map_gname: self.id@,
@@ -149,27 +173,39 @@ verus! {
                     // get ownership of GhostTok
                     let tracked tok = todo(self.tok_gnames@[reqId]);
                    
+                    // open invariant, and get GhostMapPointsTo out of it.
+
                     // TODO: I think we want to do `match &mut res { ... }` but
                     // verus doesn't support that.
-                    // open invariant, and get GhostMapPointsTo out of it.
                     let tracked mut my_ptsto;
+
                     open_atomic_invariant!(&pre => r => {
                         proof {
-                            let tracked mut x = &r;
-                            match x {
+                            // let tracked mut x = r;
+                            match r {
                                 Or::Left(ptsto) => {
                                     // TODO: want to get ownership to the outer context.
                                     my_ptsto = ptsto;
+                                    // assert(my_ptsto@.id == self.id@);
+                                    // assert(my_ptsto@.k == k);
+                                    r = Or::Right(Tracked(token_freeze(tok)));
                                 }
                                 Or::Right(wit) => {
-                                    token_witness(&tok, wit.borrow());
+                                    token_witness_false(&tok, wit.borrow());
                                     assert(false);
+                                    // TODO: this stuff is here so the rest of
+                                    // the the compiler doesn't complain in the
+                                    // rest of the code that "r is moved" and
+                                    // "my_ptsto may be uninitialized".
+                                    my_ptsto = Tracked(false_pointsto());
+                                    r = Or::Right(wit);
                                 }
                             }
                         }
                     });
 
-                    // s.kv.put(k,v,Tracked(my_ptsto.borrow_mut()));
+                    proof { assert(self.id@ == s.kv.get_id()); }
+                    s.kv.put(k,v,Tracked(my_ptsto.borrow_mut()));
                     s.replies.insert(k,0);
                 }
             }
