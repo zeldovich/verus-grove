@@ -134,7 +134,6 @@ verus! {
                     *v
                 }
                 None => {
-                    assume(false);
                     0u64
                 }
             }
