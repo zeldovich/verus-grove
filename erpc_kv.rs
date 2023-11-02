@@ -6,40 +6,6 @@ mod kv;
 use kv::*;
 
 verus! {
-    struct KvErpcState {
-        kv:KvState,
-        replies:lmap::LMap<u64,u64>, //<u64>,
-        nextFreshReqId:u64,
-    }
-
-    struct KvErpcServer {
-        s: lock::Lock<KvErpcState>,
-        pub id: Ghost<nat>,
-        pub tok_gnames: Ghost<Map<u64,nat>>,
-    }
-
-    // fn contains(v:&Vec<u64>, k:u64) -> (ret:bool)
-    //     ensures ret == v@.contains(k)
-    // {
-    //     let mut i = 0;
-    //     while i < v.len()
-    //         invariant i <= v.len(),
-    //                   !v@.subrange(0,i as int).contains(k),
-    //     {
-    //         if v[i] == k {
-    //             return true;
-    //         }
-    //         i += 1;
-    //         proof { lemma_seq_properties::<u64>(); }
-    //         // assert(forall|j:int| 0 <= j < v@.len() ==> v@[j] != k);
-    //         // assert (!v@.subrange(0,i as int).contains(k))
-    //     }
-    //     proof { lemma_seq_skip_nothing(v@, 0); }
-    //     // assert(v@ == v@.subrange(0,i as int));
-    //     return false;
-    // }
-
-
     #[verifier(external_body)]
     pub struct GhostToken;
 
@@ -82,13 +48,27 @@ verus! {
         unimplemented!();
     }
 
-
     enum Or<A,B> {
         Left(A),
         Right(B),
     }
 
-    // Either GhostMapPointsTo or 
+    // TODO: make a bundle of gnames, so that we can introduce separate types for each of
+    // these CSL props, that each take a gname-bundle as input (really, keeping
+    // it as a field).
+    // TODO: is it possible to actually pass in the gname as an input parameter?
+    // E.g. want to write GhostToken<gname> or GhostToken(gname) or maybe even
+    // (t : GhostToken)?
+    // (Unexecuted ∗ k ↦ x ∨ Executed ∗ ServerCompleted ∗ (k ↦ v ∨ ClientClaimed))
+    type PutErpcResources =
+        Or<Tracked<(GhostToken, GhostMapPointsTo<u64,u64>)>,
+           Tracked<(GhostWitness, // Executed
+                    GhostWitness, // ServerCompleted
+                    Or<GhostMapPointsTo<u64,u64>,
+                       GhostToken,>)
+                   >,
+           >;
+
     type PutResources =
         Or<Tracked<GhostMapPointsTo<u64,u64>>,
            Tracked<GhostWitness>,
@@ -131,32 +111,40 @@ verus! {
         unimplemented!();
     }
 
-    spec fn lockPredGen(id:nat) -> FnSpec(KvErpcState) -> bool {
-        |s:KvErpcState| s.kv.get_id() == id && s.kv.kv_inv()
+    struct KvErpcState {
+        kv:KvState,
+        replies:lmap::LMap<u64,u64>,
+        nextFreshReqId:u64,
+        toks: Tracked<Map<u64,GhostToken>>, // this is a big_sepM
+    }
+
+    struct KvErpcServer {
+        s: lock::Lock<KvErpcState>,
+        pub id: Ghost<nat>,
+        pub tok_gnames: Ghost<Map<u64,nat>>,
+    }
+
+    spec fn lockPredGen(s:KvErpcServer) -> FnSpec(KvErpcState) -> bool {
+        |st:KvErpcState|
+        st.kv.get_id() == s.id &&
+            st.kv.kv_inv() &&
+            // own all tokens with reqId >= nextFreshReqId, and they all have
+            // the right gnames.
+            (forall |reqId:u64| reqId >= st.nextFreshReqId ==>
+             st.toks@.contains_key(reqId) &&
+             s.tok_gnames@.contains_key(reqId) &&
+             #[trigger] st.toks@[reqId].gname() == s.tok_gnames@[reqId]
+            )
     }
 
     impl KvErpcServer {
         pub closed spec fn inv(self) -> bool {
-            self.s.getPred() == lockPredGen(self.id@)
-        }
-
-        pub fn get(&self, reqId:u64, k:u64) -> u64 {
-            let mut s = self.s.lock();
-            match s.replies.get(reqId) {
-                Some(resp) => {
-                    return *resp;
-                }
-                None => {
-                    s.replies.insert(reqId, 1);
-                    // return s.kv.get(k);
-                    return 37;
-                }
-            }
+            self.s.getPred() == lockPredGen(self)
         }
 
         // Step 1: get ownership of the KV points-to from the user, but don't
         // give it back. This'll require "one-way" escrow.
-        pub fn put(&self, reqId:u64, k:u64, v:u64, pre:PutPreCond)
+        pub fn put(&self, reqId:u64, k:u64, v:u64, pre:&PutPreCond)
             requires
             self.inv(),
             self.tok_gnames@.contains_key(reqId),
@@ -175,19 +163,13 @@ verus! {
                    
                     // open invariant, and get GhostMapPointsTo out of it.
 
-                    // TODO: I think we want to do `match &mut res { ... }` but
-                    // verus doesn't support that.
-                    let tracked mut my_ptsto;
-
+                    let tracked mut ptsto;
                     open_atomic_invariant!(&pre => r => {
                         proof {
-                            // let tracked mut x = r;
                             match r {
-                                Or::Left(ptsto) => {
-                                    // TODO: want to get ownership to the outer context.
-                                    my_ptsto = ptsto;
-                                    // assert(my_ptsto@.id == self.id@);
-                                    // assert(my_ptsto@.k == k);
+                                Or::Left(ptsto_in) => {
+                                    ptsto = ptsto_in;
+                                    // re-establish invariant:
                                     r = Or::Right(Tracked(token_freeze(tok)));
                                 }
                                 Or::Right(wit) => {
@@ -197,19 +179,32 @@ verus! {
                                     // the the compiler doesn't complain in the
                                     // rest of the code that "r is moved" and
                                     // "my_ptsto may be uninitialized".
-                                    my_ptsto = Tracked(false_pointsto());
+                                    ptsto = Tracked(false_pointsto());
                                     r = Or::Right(wit);
                                 }
                             }
                         }
                     });
 
-                    proof { assert(self.id@ == s.kv.get_id()); }
-                    s.kv.put(k,v,Tracked(my_ptsto.borrow_mut()));
+                    s.kv.put(k,v,Tracked(ptsto.borrow_mut()));
                     s.replies.insert(k,0);
                 }
             }
             return;
+        }
+
+        pub fn get(&self, reqId:u64, k:u64) -> u64 {
+            let mut s = self.s.lock();
+            match s.replies.get(reqId) {
+                Some(resp) => {
+                    return *resp;
+                }
+                None => {
+                    s.replies.insert(reqId, 1);
+                    // return s.kv.get(k);
+                    return 37;
+                }
+            }
         }
     }
 
