@@ -3,20 +3,29 @@ pub mod lmap;
 
 verus! {
     pub struct GhostMapAuth<#[verifier::reject_recursive_types] K,V> {
-        pub id:nat,
         pub kvs:Map<K,V>,
+        gname:nat,
     }
 
+    // FIXME: maybe should just expose the gname from here directly? But if we get
+    // rid of it, there might be a soundness issue where two points-tos might
+    // have the same spec gname() when they shouldn't.
     pub struct GhostMapPointsTo<K,V> {
-        pub id:nat,
         pub k:K,
         pub v:V,
+        gname:nat,
+    }
+
+    impl<K,V> GhostMapPointsTo<K,V> {
+        pub spec fn gname(&self) -> nat;
     }
 
     impl<K,V> GhostMapAuth<K,V> {
+        pub spec fn gname(&self) -> nat;
+
         #[verifier(external_body)]
         proof fn agree(tracked &self, tracked ptsto:&GhostMapPointsTo<K,V>)
-            requires ptsto.id == self.id
+            requires ptsto.gname() == self.gname()
             ensures
                 self.kvs.contains_key(ptsto.k),
                 self.kvs[ptsto.k] == ptsto.v
@@ -24,13 +33,13 @@ verus! {
 
         #[verifier(external_body)]
         proof fn update(tracked &mut self, v:V, tracked ptsto:&mut GhostMapPointsTo<K,V>)
-            requires old(ptsto).id == old(self).id
+            requires old(ptsto).gname() == old(self).gname()
             ensures
                 self.kvs == old(self).kvs.insert(ptsto.k, v),
                 self.kvs.contains_key(ptsto.k),
                 ptsto.v == v,
                 ptsto.k == old(ptsto).k,
-                old(self).id == self.id == ptsto.id,
+                old(self).gname() == self.gname() == ptsto.gname(),
         {}
 
         #[verifier(external_body)]
@@ -45,8 +54,8 @@ verus! {
         proof fn insert(tracked &mut self, k:K, v:V) -> (tracked ptsto:GhostMapPointsTo<K,V>)
             requires !old(self).kvs.contains_key(k)
             ensures self.kvs == old(self).kvs.insert(k,v),
-                    self.id == old(self).id,
-                    ptsto.id == self.id,
+                    self.gname() == old(self).gname(),
+                    ptsto.gname() == self.gname(),
                     ptsto.k == k,
                     ptsto.v == v,
         {
@@ -74,8 +83,8 @@ verus! {
     }
 
     impl KvState {
-        pub closed spec fn get_id(self) -> nat {
-            self.ghostKvs@.id
+        pub closed spec fn gname(self) -> nat {
+            self.ghostKvs@.gname()
         }
 
         pub closed spec fn kv_inv(self) -> bool {
@@ -85,7 +94,7 @@ verus! {
         pub fn new() -> (ret:(KvState, Tracked<GhostMapPointsTo<u64,u64>>, Tracked<GhostMapPointsTo<u64,u64>>))
             ensures 
                     (ret.0).kv_inv(),
-                    (ret.0.get_id() == ret.1@.id == ret.2@.id),
+                    (ret.0.gname() == ret.1@.gname() == ret.2@.gname()),
                     (ret.1@.k == 0),
                     (ret.2@.k == 1),
                     (ret.1@.v == ret.2@.v == 0)
@@ -103,12 +112,12 @@ verus! {
 
         pub fn put(&mut self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
-                old(ptsto).id == old(self).get_id(),
+                old(ptsto).gname() == old(self).gname(),
                 old(ptsto).k == k,
                 old(self).kv_inv(),
             ensures ptsto.v == v,
                     ptsto.k == old(ptsto).k,
-                    old(self).get_id() == self.get_id() == ptsto.id,
+                    old(self).gname() == self.gname() == ptsto.gname(),
                     self.kv_inv(),
         {
             self.m.insert(k,v);
@@ -121,7 +130,7 @@ verus! {
         pub fn get(&self, k:u64, Tracked(ptsto):Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
                 self.kv_inv(),
-                ptsto.id == self.get_id(),
+                ptsto.gname() == self.gname(),
                 ptsto.k == k,
             ensures (ptsto.v == result)
         {
