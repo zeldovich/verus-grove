@@ -1,6 +1,3 @@
-#![allow(mixed_script_confusables)]
-#![deny(non_ascii_idents)]
-
 use vstd::{prelude::*,invariant::*,thread::*};
 // use std::sync::Arc;
 mod lock;
@@ -17,11 +14,11 @@ verus! {
     pub struct GhostWitness;
 
     impl GhostToken {
-        spec fn gname(&self) -> nat;
+        pub spec fn gname(&self) -> nat;
     }
 
     impl GhostWitness {
-        spec fn gname(&self) -> nat;
+        pub spec fn gname(&self) -> nat;
     }
 
     #[verifier(external_body)]
@@ -72,10 +69,10 @@ verus! {
     // (t : GhostToken)?
     // (Unexecuted ∗ k ↦ x ∨ Executed ∗ ServerCompleted ∗ (k ↦ v ∨ ClientClaimed))
     type PutResources =
-        Tracked<Or<(GhostToken, GhostMapPointsTo<u64,u64>),
+        Or<(GhostToken, GhostMapPointsTo<u64,u64>),
            (GhostWitness, // Executed
             GhostWitness, // ServerCompleted
-            Or<GhostMapPointsTo<u64,u64>, GhostWitness,>),>>;
+            Or<GhostMapPointsTo<u64,u64>, GhostWitness,>),>;
 
     pub struct PutInvConsts {
         pub k:u64,
@@ -90,7 +87,7 @@ verus! {
         closed spec fn inv(c: PutInvConsts, r: PutResources) -> bool {
             c.gamma.req_gnames.contains_key(c.req_id) && // XXX(total map)
             c.gamma.reply_gnames.contains_key(c.req_id) && // XXX(total map)
-            match r@ {
+            match r {
                 Or::Left((unexecuted, ptsto)) => {
                     unexecuted.gname() == c.gamma.req_gnames[c.req_id] &&
                     ptsto.gname() == c.kv_gname &&
@@ -101,8 +98,9 @@ verus! {
                     receipt.gname() == c.gamma.reply_gnames[c.req_id]  &&
                     match client_escrow {
                         Or::Left(ptsto) => {
-                            ptsto.gname() == c.kv_gname
-                            // FIXME: more stuff here about k and v 
+                            ptsto.gname() == c.kv_gname &&
+                            ptsto.k == c.k &&
+                            ptsto.v == c.v
                         }
                         Or::Right(claimed) => {
                             claimed.gname() == c.gamma.req_gnames[c.req_id]
@@ -163,18 +161,54 @@ verus! {
             self.s.getPred() == lockPredGen(self)
         }
 
-        proof fn put_fupd(&self, tok:GhostToken, pre:&PutPreCond, tracked ghostMap:&mut GhostMapAuth<u64,u64>)
+        // FIXME: 
+        proof fn put_fupd(tracked &self, tracked tok:GhostToken, tracked pre:&PutPreCond, tracked ghostMap:&mut GhostMapAuth<u64,u64>)
                           -> (tracked r:GhostWitness)
             requires self.gamma@.reply_gnames.contains_key(pre.constant().req_id), // XXX(total map)
             tok.gname() == self.gamma@.reply_gnames[pre.constant().req_id],
             pre.constant().kv_gname == old(ghostMap).gname(),
 
             ensures old(ghostMap).gname() == ghostMap.gname(),
-            // ghostMap.kvs == old(ghostMap).insert(pre.k, )
-            
+            ghostMap.kvs == old(ghostMap).kvs.insert(pre.constant().k, pre.constant().v)
+        opens_invariants any
         {
-            assume(false);
-            false_to_anything().get()
+            let tracked wit;
+            // open invariant, and get GhostMapPointsTo out of it.
+                assert(1 == 1);
+            open_atomic_invariant!(&pre => r => {
+                match r {
+                    Or::Left((unexecuted, mut ptsto)) => {
+                        // let mut x = ptsto; FIXME: why doesn't this work?
+                        ghostMap.update(pre.constant().v, &mut ptsto);
+
+                        let tracked executed;
+                        executed = token_freeze(unexecuted);
+
+                        let tracked receipt;
+                        receipt = token_freeze(tok);
+                        wit = witness_clone(&receipt);
+
+                        // re-establish invariant:
+                        r = Or::Right((executed, receipt, Or::Left(ptsto)));
+                        assert(PutPredicate::inv(pre.constant(), r));
+                    }
+                    Or::Right((executed, a, b)) => {
+                        token_witness_false(&tok, &executed);
+                        // FIXME: seems like inside_ghost < 0
+                        assert(false);
+                        wit = witness_clone(&executed);
+                        r = Or::Right((executed, a, b));
+                        // TODO: this stuff is here so the rest of
+                        // the the compiler doesn't complain in the
+                        // rest of the code that "r is moved" and
+                        // "my_ptsto may be uninitialized".
+                        // ptsto = Tracked(false_to_anything()).get();
+                        // r = Or::Right(wit);
+                    }
+                }
+            });
+            return wit;
+            // false_to_anything().get()
         }
 
         // Step 1: get ownership of the KV points-to from the user, but don't
@@ -205,29 +239,6 @@ verus! {
                         tok = (s.server_toks.borrow_mut()).tracked_remove(req_id);
                     }
                    
-                    // open invariant, and get GhostMapPointsTo out of it.
-                    let tracked mut ptsto;
-                    open_atomic_invariant!(&pre => r => {
-                        proof {
-                            match r {
-                                Or::Left(ptsto_in) => {
-                                    ptsto = ptsto_in;
-                                    // re-establish invariant:
-                                    r = Or::Right(Tracked(token_freeze(tok)));
-                                }
-                                Or::Right(wit) => {
-                                    token_witness_false(&tok, wit.borrow());
-                                    assert(false);
-                                    // TODO: this stuff is here so the rest of
-                                    // the the compiler doesn't complain in the
-                                    // rest of the code that "r is moved" and
-                                    // "my_ptsto may be uninitialized".
-                                    ptsto = Tracked(false_to_anything()).get();
-                                    r = Or::Right(wit);
-                                }
-                            }
-                        }
-                    });
 
                     s.kv.put(k,v,Tracked(ptsto.borrow_mut()));
                     s.replies.insert(req_id,0);

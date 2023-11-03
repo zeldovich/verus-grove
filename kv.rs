@@ -4,16 +4,16 @@ pub mod lmap;
 verus! {
     pub struct GhostMapAuth<#[verifier::reject_recursive_types] K,V> {
         pub kvs:Map<K,V>,
-        gname:nat,
+        pub _id:nat,
     }
 
-    // FIXME: maybe should just expose the gname from here directly? But if we get
+    // FIXME: maybe should just expose the gname from here directly? If we get
     // rid of it, there might be a soundness issue where two points-tos might
     // have the same spec gname() when they shouldn't.
     pub struct GhostMapPointsTo<K,V> {
         pub k:K,
         pub v:V,
-        gname:nat,
+        pub _id:nat,
     }
 
     impl<K,V> GhostMapPointsTo<K,V> {
@@ -24,7 +24,7 @@ verus! {
         pub spec fn gname(&self) -> nat;
 
         #[verifier(external_body)]
-        proof fn agree(tracked &self, tracked ptsto:&GhostMapPointsTo<K,V>)
+        pub proof fn agree(tracked &self, tracked ptsto:&GhostMapPointsTo<K,V>)
             requires ptsto.gname() == self.gname()
             ensures
                 self.kvs.contains_key(ptsto.k),
@@ -32,7 +32,7 @@ verus! {
         {}
 
         #[verifier(external_body)]
-        proof fn update(tracked &mut self, v:V, tracked ptsto:&mut GhostMapPointsTo<K,V>)
+        pub proof fn update(tracked &mut self, v:V, tracked ptsto:&mut GhostMapPointsTo<K,V>)
             requires old(ptsto).gname() == old(self).gname()
             ensures
                 self.kvs == old(self).kvs.insert(ptsto.k, v),
@@ -43,7 +43,7 @@ verus! {
         {}
 
         #[verifier(external_body)]
-        proof fn new() -> (tracked r:GhostMapAuth<K,V>)
+        pub proof fn new() -> (tracked r:GhostMapAuth<K,V>)
             ensures r.kvs == Map::<K,V>::empty()
 
         {
@@ -51,7 +51,7 @@ verus! {
         }
 
         #[verifier(external_body)]
-        proof fn insert(tracked &mut self, k:K, v:V) -> (tracked ptsto:GhostMapPointsTo<K,V>)
+        pub proof fn insert(tracked &mut self, k:K, v:V) -> (tracked ptsto:GhostMapPointsTo<K,V>)
             requires !old(self).kvs.contains_key(k)
             ensures self.kvs == old(self).kvs.insert(k,v),
                     self.gname() == old(self).gname(),
