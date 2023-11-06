@@ -119,68 +119,108 @@ verus! {
         unimplemented!();
     }
 
+    struct KvErpcGhostResources {
+        kv_auth: GhostMapAuth<u64,u64>,
+        client_toks: Map<u64,GhostToken>, // this is a big_sepM
+        server_toks: Map<u64,GhostToken>,
+    }
+
     struct KvErpcState {
         m:lmap::LMap<u64,u64>,
         replies:lmap::LMap<u64,u64>,
         next_fresh_req_id:u64,
-
-        ghostKvs: Tracked<GhostMapAuth<u64,u64>>,
-        client_toks: Tracked<Map<u64,GhostToken>>, // this is a big_sepM
-        server_toks: Tracked<Map<u64,GhostToken>>,
+        g: Tracked<KvErpcGhostResources>,
     }
 
     struct KvErpcServer {
-        s: lock::Lock<KvErpcState>,
+        mu: lock::Lock<KvErpcState>,
         pub kv_gname: Ghost<nat>,
         pub gamma:Ghost<ExactlyOnceGnames>,
     }
 
-    spec fn lockPredGen(s:KvErpcServer) -> FnSpec(KvErpcState) -> bool {
+    spec fn gen_lock_pred(s:KvErpcServer) -> FnSpec(KvErpcState) -> bool {
         |st:KvErpcState|
-        st.ghostKvs@.gname() == s.kv_gname &&
-            st.ghostKvs@.kvs == st.m@ && // FIXME: make this gauge-invariant
-
-            // own all client-side tokens with req_id >= next_fresh_req_id, and they all have
-            // the right gnames.
-            // FIXME: need to figure out the right trigger to pick, makes a big
-            // difference.
-            (forall |req_id:u64| req_id >= st.next_fresh_req_id ==>
-             #[trigger] 
-             st.client_toks@.contains_key(req_id) &&
-             s.gamma@.req_gnames.contains_key(req_id) &&
-             st.client_toks@[req_id].gname() == s.gamma@.req_gnames[req_id]
-            ) &&
-            (forall |req_id:u64| !(#[trigger] st.replies@.contains_key(req_id)) ==>
-             st.server_toks@.contains_key(req_id) &&
-             s.gamma@.reply_gnames.contains_key(req_id) &&
-             st.server_toks@[req_id].gname() == s.gamma@.reply_gnames[req_id]
-            )
+        st.g@.kv_auth.gname() == s.kv_gname &&
+            st.g@.inv(s.gamma@, st@)
     }
 
-    impl KvErpcServer {
-        pub closed spec fn inv(self) -> bool {
-            self.s.getPred() == lockPredGen(self)
+    // Want this so we can pass this in and out of the put_fupd lemma.
+    ghost struct KvErpcStateGhost {
+        m: Map<u64,u64>,
+        replies: Map<u64,u64>,
+        next_fresh_req_id: u64,
+    }
+    impl KvErpcStateGhost {
+        // next state transitions
+        pub closed spec fn put(self, req_id:u64, k:u64, v:u64) -> KvErpcStateGhost {
+            // this is a "spec fn" version of the exec code
+            if self.replies.contains_key(req_id) {
+                self
+            } else {
+                KvErpcStateGhost{
+                    replies: self.replies.insert(req_id, 0u64),
+                    m: self.m.insert(k,v),
+                    next_fresh_req_id: self.next_fresh_req_id,
+                }
+            }
         }
 
-        // FIXME: this doesn't fully encapsulate the server-side fupd. The
-        // server_tok should be entirely inside of here.
-        proof fn put_fupd(tracked &self, tracked server_tok:GhostToken,
-                          tracked pre:&PutPreCond, tracked ghostMap:&mut GhostMapAuth<u64,u64>)
-                          -> (tracked r:GhostWitness)
-            requires
-            self.gamma@ == pre.constant().gamma,
-            self.gamma@.reply_gnames.contains_key(pre.constant().req_id), // XXX(total map)
-            server_tok.gname() == self.gamma@.reply_gnames[pre.constant().req_id],
-            pre.constant().kv_gname == old(ghostMap).gname(),
+        spec fn get_fresh_req_id(self, req_id:u64, k:u64, v:u64) -> (KvErpcStateGhost, u64) {
+            // this is a "spec fn" version of the exec code
+            ((KvErpcStateGhost{
+                replies: self.replies,
+                m: self.m,
+                next_fresh_req_id: (self.next_fresh_req_id + 1u64) as u64,
+            }), self.next_fresh_req_id)
+        }
+    }
 
-            ensures old(ghostMap).gname() == ghostMap.gname(),
-            ghostMap.kvs == old(ghostMap).kvs.insert(pre.constant().k, pre.constant().v),
-            r.gname() == self.gamma@.reply_gnames[pre.constant().req_id],
-        opens_invariants any
+    impl KvErpcGhostResources {
+        pub closed spec fn inv(&self, gamma:ExactlyOnceGnames, st:KvErpcStateGhost) -> bool {
+            // own all client-side tokens with req_id >= next_fresh_req_id, and they all have
+            // the right gnames.
+            // Might need to figure out the right trigger to pick, makes a big
+            // difference.
+            self.kv_auth.kvs == st.m && // FIXME: make this gauge-invariant
+
+            (forall |req_id:u64| req_id >= st.next_fresh_req_id ==>
+             #[trigger] 
+             self.client_toks.contains_key(req_id) &&
+             gamma.req_gnames.contains_key(req_id) &&
+             self.client_toks[req_id].gname() == gamma.req_gnames[req_id]
+            ) &&
+            (forall |req_id:u64| !(#[trigger] st.replies.contains_key(req_id)) ==>
+             self.server_toks.contains_key(req_id) &&
+             gamma.reply_gnames.contains_key(req_id) &&
+             self.server_toks[req_id].gname() == gamma.reply_gnames[req_id]
+            )
+        }
+
+        #[verifier(external_body)]
+        proof fn put_fupd(tracked &mut self, gamma:ExactlyOnceGnames, st:KvErpcStateGhost,
+                                  tracked pre:&PutPreCond) -> (tracked receipt:GhostWitness)
+            requires old(self).inv(gamma, st),
+
+            ensures
+            self.kv_auth.gname() == old(self).kv_auth.gname(),
+            gamma.reply_gnames.contains_key(pre.constant().req_id),
+            receipt.gname() == gamma.reply_gnames[pre.constant().req_id],
+            self.inv(gamma, st.put(pre.constant().req_id, pre.constant().k, pre.constant().v,)),
+        {
+            todo!()
+
+            /*
+             * Getting token out:
+                    proof {
+                        assert(!s.replies@.contains_key(req_id));
+                        assert(s.g.server_toks.contains_key(req_id));
+                        let tok = (s.g.server_toks).tracked_remove(req_id);
+                        witness = Tracked(self.put_fupd(tok, &pre, &mut s.g.kv_auth));
+                    }
+
         {
             let tracked wit;
             // open invariant, and get GhostMapPointsTo out of it.
-                assert(1 == 1);
             open_atomic_invariant!(&pre => r => {
                 match r {
                     Or::Left((unexecuted, mut ptsto)) => {
@@ -215,8 +255,27 @@ verus! {
             });
             return wit;
         }
+             */
 
-        #[verifier(external_body)]
+        }
+    }
+
+    impl View for KvErpcState {
+        type V = KvErpcStateGhost;
+        closed spec fn view(&self) -> KvErpcStateGhost {
+            KvErpcStateGhost{
+                m: self.m@,
+                replies: self.replies@,
+                next_fresh_req_id: self.next_fresh_req_id,
+            }
+        }
+    }
+
+    impl KvErpcServer {
+        pub closed spec fn inv(self) -> bool {
+            self.mu.get_pred() == gen_lock_pred(self)
+        }
+
         pub fn put(&self, req_id:u64, k:u64, v:u64, pre:&PutPreCond) -> (witness:Tracked<GhostWitness>)
             requires
             self.inv(),
@@ -228,42 +287,34 @@ verus! {
                 v: v,
                 gamma: self.gamma@,
             })
-
             ensures witness@.gname() == self.gamma@.reply_gnames[req_id],
         {
-            let mut s = self.s.lock();
-            let witness;
+            let mut s = self.mu.lock();
+            let tracked witness = (s.g.borrow_mut()).put_fupd(self.gamma@, s@, &pre);
             match s.replies.get(req_id) {
-                Some(_) => {
-                    witness = Tracked(todo!());
-                    // FIXME: return witness
-                },
+                Some(_) => {},
                 None => {
-                    // get ownership of GhostTok
-                    proof {
-                        assert(!s.replies@.contains_key(req_id));
-                        assert(s.server_toks@.contains_key(req_id));
-                        let tok = (s.server_toks.borrow_mut()).tracked_remove(req_id);
-                        witness = Tracked(self.put_fupd(tok, &pre, s.ghostKvs.borrow_mut()));
-                    }
-
                     s.replies.insert(req_id,0);
-                    // NOTE(test): commenting this out makes the proof fail. Neat!
+                    s.m.insert(k,v); // NOTE(test): commenting this out makes the proof fail. Neat!
                 }
             }
-            self.s.unlock(s);
-            return witness;
+            self.mu.unlock(s);
+            return Tracked(witness);
         }
 
         pub fn get(&self, req_id:u64, k:u64) -> u64 {
-            let mut s = self.s.lock();
+            let mut s = self.mu.lock();
             match s.replies.get(req_id) {
                 Some(resp) => {
-                    return *resp;
+                    let x = *resp;
+                    self.mu.unlock(s);
+                    return x;
                 }
                 None => {
-                    s.replies.insert(req_id, 1);
+                    // FIXME:
+                    // s.replies.insert(req_id, 1);
                     // return s.kv.get(k);
+                    self.mu.unlock(s);
                     return 37;
                 }
             }

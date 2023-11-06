@@ -28,12 +28,12 @@ verus! {
 
     impl<A> Lock<A> {
 
-        pub spec fn getPred(self) -> FnSpec(A) -> bool;
+        pub spec fn get_pred(self) -> FnSpec(A) -> bool;
 
         #[verifier::external_body]
         pub fn new(a:A, Ghost(pred):Ghost<FnSpec(A) -> bool>) -> (l:Lock<A>)
             requires pred(a)
-            ensures l.getPred() == pred
+            ensures l.get_pred() == pred
             // ensures forall|a:A| l.pred(a) == pred(a)
         {
             // let data = Arc::new(Mutex::new(0));
@@ -42,14 +42,14 @@ verus! {
 
         #[verifier::external_body]
         pub fn lock(&self) -> (a:A)
-            ensures self.getPred()(a)
+            ensures self.get_pred()(a)
         {
             unimplemented!();
         }
 
         #[verifier::external_body]
         pub fn unlock(&self, a:A)
-            requires self.getPred()(a)
+            requires self.get_pred()(a)
         {
             unimplemented!();
         }
