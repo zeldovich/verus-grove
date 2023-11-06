@@ -5,7 +5,6 @@ mod kv;
 // mod lmap;
 use kv::*;
 
-
 verus! {
     #[verifier(external_body)]
     pub struct GhostToken;
@@ -84,7 +83,7 @@ verus! {
 
     struct PutPredicate {}
     impl InvariantPredicate<PutInvConsts, PutResources> for PutPredicate {
-        closed spec fn inv(c: PutInvConsts, r: PutResources) -> bool {
+        open spec fn inv(c: PutInvConsts, r: PutResources) -> bool {
             c.gamma.req_gnames.contains_key(c.req_id) && // XXX(total map)
             c.gamma.reply_gnames.contains_key(c.req_id) && // XXX(total map)
             match r {
@@ -121,9 +120,11 @@ verus! {
     }
 
     struct KvErpcState {
-        kv:KvState,
+        m:lmap::LMap<u64,u64>,
         replies:lmap::LMap<u64,u64>,
         next_fresh_req_id:u64,
+
+        ghostKvs: Tracked<GhostMapAuth<u64,u64>>,
         client_toks: Tracked<Map<u64,GhostToken>>, // this is a big_sepM
         server_toks: Tracked<Map<u64,GhostToken>>,
     }
@@ -136,11 +137,11 @@ verus! {
 
     spec fn lockPredGen(s:KvErpcServer) -> FnSpec(KvErpcState) -> bool {
         |st:KvErpcState|
-        st.kv.gname() == s.kv_gname &&
-            st.kv.kv_inv() &&
+        st.ghostKvs@.gname() == s.kv_gname &&
+            st.ghostKvs@.kvs == st.m@ && // FIXME: make this gauge-invariant
+
             // own all client-side tokens with req_id >= next_fresh_req_id, and they all have
             // the right gnames.
-
             // FIXME: need to figure out the right trigger to pick, makes a big
             // difference.
             (forall |req_id:u64| req_id >= st.next_fresh_req_id ==>
@@ -161,15 +162,20 @@ verus! {
             self.s.getPred() == lockPredGen(self)
         }
 
-        // FIXME: 
-        proof fn put_fupd(tracked &self, tracked tok:GhostToken, tracked pre:&PutPreCond, tracked ghostMap:&mut GhostMapAuth<u64,u64>)
+        // FIXME: this doesn't fully encapsulate the server-side fupd. The
+        // server_tok should be entirely inside of here.
+        proof fn put_fupd(tracked &self, tracked server_tok:GhostToken,
+                          tracked pre:&PutPreCond, tracked ghostMap:&mut GhostMapAuth<u64,u64>)
                           -> (tracked r:GhostWitness)
-            requires self.gamma@.reply_gnames.contains_key(pre.constant().req_id), // XXX(total map)
-            tok.gname() == self.gamma@.reply_gnames[pre.constant().req_id],
+            requires
+            self.gamma@ == pre.constant().gamma,
+            self.gamma@.reply_gnames.contains_key(pre.constant().req_id), // XXX(total map)
+            server_tok.gname() == self.gamma@.reply_gnames[pre.constant().req_id],
             pre.constant().kv_gname == old(ghostMap).gname(),
 
             ensures old(ghostMap).gname() == ghostMap.gname(),
-            ghostMap.kvs == old(ghostMap).kvs.insert(pre.constant().k, pre.constant().v)
+            ghostMap.kvs == old(ghostMap).kvs.insert(pre.constant().k, pre.constant().v),
+            r.gname() == self.gamma@.reply_gnames[pre.constant().req_id],
         opens_invariants any
         {
             let tracked wit;
@@ -178,26 +184,26 @@ verus! {
             open_atomic_invariant!(&pre => r => {
                 match r {
                     Or::Left((unexecuted, mut ptsto)) => {
-                        // let mut x = ptsto; FIXME: why doesn't this work?
                         ghostMap.update(pre.constant().v, &mut ptsto);
 
                         let tracked executed;
                         executed = token_freeze(unexecuted);
 
                         let tracked receipt;
-                        receipt = token_freeze(tok);
+                        receipt = token_freeze(server_tok);
                         wit = witness_clone(&receipt);
 
                         // re-establish invariant:
                         r = Or::Right((executed, receipt, Or::Left(ptsto)));
-                        assert(PutPredicate::inv(pre.constant(), r));
+                        // let c = pre.constant();
+                        // assert(receipt.gname() == c.gamma.reply_gnames[c.req_id]);
+                        // assert(PutPredicate::inv(pre.constant(), r));
                     }
-                    Or::Right((executed, a, b)) => {
-                        token_witness_false(&tok, &executed);
-                        // FIXME: seems like inside_ghost < 0
+                    Or::Right((executed, receipt, b)) => {
+                        token_witness_false(&server_tok, &receipt);
                         assert(false);
                         wit = witness_clone(&executed);
-                        r = Or::Right((executed, a, b));
+                        r = Or::Right((executed, receipt, b));
                         // TODO: this stuff is here so the rest of
                         // the the compiler doesn't complain in the
                         // rest of the code that "r is moved" and
@@ -208,13 +214,10 @@ verus! {
                 }
             });
             return wit;
-            // false_to_anything().get()
         }
 
-        // Step 1: get ownership of the KV points-to from the user, but don't
-        // give it back. This'll require "one-way" escrow.
         #[verifier(external_body)]
-        pub fn put(&self, req_id:u64, k:u64, v:u64, pre:&PutPreCond)
+        pub fn put(&self, req_id:u64, k:u64, v:u64, pre:&PutPreCond) -> (witness:Tracked<GhostWitness>)
             requires
             self.inv(),
             self.gamma@.reply_gnames.contains_key(req_id),
@@ -225,47 +228,31 @@ verus! {
                 v: v,
                 gamma: self.gamma@,
             })
+
+            ensures witness@.gname() == self.gamma@.reply_gnames[req_id],
         {
-            /*
             let mut s = self.s.lock();
+            let witness;
             match s.replies.get(req_id) {
-                Some(_) => {},
+                Some(_) => {
+                    witness = Tracked(todo!());
+                    // FIXME: return witness
+                },
                 None => {
                     // get ownership of GhostTok
-                    let tracked tok;
                     proof {
                         assert(!s.replies@.contains_key(req_id));
                         assert(s.server_toks@.contains_key(req_id));
-                        tok = (s.server_toks.borrow_mut()).tracked_remove(req_id);
+                        let tok = (s.server_toks.borrow_mut()).tracked_remove(req_id);
+                        witness = Tracked(self.put_fupd(tok, &pre, s.ghostKvs.borrow_mut()));
                     }
-                   
 
-                    s.kv.put(k,v,Tracked(ptsto.borrow_mut()));
                     s.replies.insert(req_id,0);
                     // NOTE(test): commenting this out makes the proof fail. Neat!
                 }
             }
-            proof {
-                // assert(s.kv.get_id() == self.id);
-                // assert(s.kv.kv_inv());
-
-                // assert (forall |req_id:u64| req_id >= s.next_fresh_req_id ==>
-                //         #[trigger] 
-                //  s.client_toks@.contains_key(req_id) &&
-                //  self.gamma@.req_gnames.contains_key(req_id) &&
-                //  s.client_toks@[req_id].gname() == self.gamma@.req_gnames[req_id]
-                // );
-
-                // assert (forall |req_id:u64| !(#[trigger] s.replies@.contains_key(req_id)) ==>
-                //  s.server_toks@.contains_key(req_id) &&
-                //  self.gamma@.reply_gnames.contains_key(req_id) &&
-                //  s.server_toks@[req_id].gname() == self.gamma@.reply_gnames[req_id]
-                // );
-                // assert(lockPredGen(*self)(s));
-            }
             self.s.unlock(s);
-             */
-            return;
+            return witness;
         }
 
         pub fn get(&self, req_id:u64, k:u64) -> u64 {
