@@ -196,67 +196,58 @@ verus! {
             )
         }
 
-        #[verifier(external_body)]
-        proof fn put_fupd(tracked &mut self, gamma:ExactlyOnceGnames, st:KvErpcStateGhost,
+        proof fn put_fupd(tracked &mut self, st:KvErpcStateGhost,
                                   tracked pre:&PutPreCond) -> (tracked receipt:GhostWitness)
-            requires old(self).inv(gamma, st),
+            requires old(self).inv(pre.constant().gamma, st),
+            pre.constant().kv_gname == old(self).kv_auth.gname(),
 
             ensures
             self.kv_auth.gname() == old(self).kv_auth.gname(),
-            gamma.reply_gnames.contains_key(pre.constant().req_id),
-            receipt.gname() == gamma.reply_gnames[pre.constant().req_id],
-            self.inv(gamma, st.put(pre.constant().req_id, pre.constant().k, pre.constant().v,)),
+            pre.constant().gamma.reply_gnames.contains_key(pre.constant().req_id),
+            receipt.gname() == pre.constant().gamma.reply_gnames[pre.constant().req_id],
+            self.inv(pre.constant().gamma, st.put(pre.constant().req_id, pre.constant().k, pre.constant().v,)),
+
+            opens_invariants any
         {
-            todo!()
+            let req_id = pre.constant().req_id;
+            if st.replies.contains_key(pre.constant().req_id) {
+                // TODO: maintain and then get witness from server resources
+                assume(false);
+                return false_to_anything().get();
+            } else { // case: first time seeing request
+                // get out token
+                let tracked server_tok = (self.server_toks).tracked_remove(req_id);
+                let tracked witness;
+                // open invariant, and fire the fupd with the points-to
+                open_atomic_invariant!(&pre => r => {
+                    match r {
+                        Or::Left((unexecuted, mut ptsto)) => {
+                            self.kv_auth.update(pre.constant().v, &mut ptsto);
 
-            /*
-             * Getting token out:
-                    proof {
-                        assert(!s.replies@.contains_key(req_id));
-                        assert(s.g.server_toks.contains_key(req_id));
-                        let tok = (s.g.server_toks).tracked_remove(req_id);
-                        witness = Tracked(self.put_fupd(tok, &pre, &mut s.g.kv_auth));
+                            let tracked executed;
+                            executed = token_freeze(unexecuted);
+
+                            let tracked receipt;
+                            receipt = token_freeze(server_tok);
+                            witness = witness_clone(&receipt);
+
+                            // re-establish invariant:
+                            r = Or::Right((executed, receipt, Or::Left(ptsto)));
+                        }
+                        Or::Right((executed, receipt, b)) => {
+                            token_witness_false(&server_tok, &receipt);
+                            assert(false);
+                            witness = witness_clone(&executed);
+                            r = Or::Right((executed, receipt, b));
+                            // TODO: this stuff is here so the rest of
+                            // the the compiler doesn't complain in the
+                            // rest of the code that "r is moved" and
+                            // "my_ptsto may be uninitialized".
+                        }
                     }
-
-        {
-            let tracked wit;
-            // open invariant, and get GhostMapPointsTo out of it.
-            open_atomic_invariant!(&pre => r => {
-                match r {
-                    Or::Left((unexecuted, mut ptsto)) => {
-                        ghostMap.update(pre.constant().v, &mut ptsto);
-
-                        let tracked executed;
-                        executed = token_freeze(unexecuted);
-
-                        let tracked receipt;
-                        receipt = token_freeze(server_tok);
-                        wit = witness_clone(&receipt);
-
-                        // re-establish invariant:
-                        r = Or::Right((executed, receipt, Or::Left(ptsto)));
-                        // let c = pre.constant();
-                        // assert(receipt.gname() == c.gamma.reply_gnames[c.req_id]);
-                        // assert(PutPredicate::inv(pre.constant(), r));
-                    }
-                    Or::Right((executed, receipt, b)) => {
-                        token_witness_false(&server_tok, &receipt);
-                        assert(false);
-                        wit = witness_clone(&executed);
-                        r = Or::Right((executed, receipt, b));
-                        // TODO: this stuff is here so the rest of
-                        // the the compiler doesn't complain in the
-                        // rest of the code that "r is moved" and
-                        // "my_ptsto may be uninitialized".
-                        // ptsto = Tracked(false_to_anything()).get();
-                        // r = Or::Right(wit);
-                    }
-                }
-            });
-            return wit;
-        }
-             */
-
+                });
+                return witness;
+            }
         }
     }
 
@@ -290,7 +281,7 @@ verus! {
             ensures witness@.gname() == self.gamma@.reply_gnames[req_id],
         {
             let mut s = self.mu.lock();
-            let tracked witness = (s.g.borrow_mut()).put_fupd(self.gamma@, s@, &pre);
+            let tracked witness = (s.g.borrow_mut()).put_fupd(s@, &pre);
             match s.replies.get(req_id) {
                 Some(_) => {},
                 None => {
