@@ -79,6 +79,7 @@ verus! {
         pub req_id:u64,
         pub kv_gname: nat,
         pub gamma:ExactlyOnceGnames,
+        pub client_escrow_gname: nat,
     }
 
     struct PutPredicate {}
@@ -102,7 +103,7 @@ verus! {
                             ptsto.v == c.v
                         }
                         Or::Right(claimed) => {
-                            claimed.gname() == c.gamma.req_gnames[c.req_id]
+                            claimed.gname() == c.client_escrow_gname
                         }
                     }
                 }
@@ -168,12 +169,12 @@ verus! {
             }
         }
 
-        spec fn get_fresh_req_id(self, req_id:u64, k:u64, v:u64) -> (KvErpcStateGhost, u64) {
+        spec fn get_fresh_req_id(self) -> (KvErpcStateGhost, u64) {
             // this is a "spec fn" version of the exec code
             ((KvErpcStateGhost{
                 replies: self.replies,
                 m: self.m,
-                next_fresh_req_id: (self.next_fresh_req_id + 1u64) as u64,
+                next_fresh_req_id: add(self.next_fresh_req_id, 1u64),
             }), self.next_fresh_req_id)
         }
     }
@@ -187,8 +188,8 @@ verus! {
             self.kv_auth.kvs == st.m && // FIXME: make this gauge-invariant
 
             (forall |req_id:u64| req_id >= st.next_fresh_req_id ==>
-             #[trigger] 
-             self.client_toks.contains_key(req_id) &&
+             (#[trigger] 
+             self.client_toks.contains_key(req_id)) &&
              gamma.req_gnames.contains_key(req_id) &&
              self.client_toks[req_id].gname() == gamma.req_gnames[req_id]
             ) &&
@@ -226,8 +227,8 @@ verus! {
             } else { // case: first time seeing request
                 // get out token
                 let tracked server_tok = (self.server_toks).tracked_remove(req_id);
-                let tracked witness;
                 // open invariant, and fire the fupd with the points-to
+                let tracked witness;
                 open_atomic_invariant!(&pre => r => {
                     match r {
                         Or::Left((unexecuted, mut ptsto)) => {
@@ -235,33 +236,7 @@ verus! {
                             let tracked executed = token_freeze(unexecuted);
                             witness = token_freeze(server_tok);
                             self.receipts.tracked_insert(pre.constant().req_id, witness_clone(&witness));
-                            // NOTE(test): try replacing `req_id` with `k`.
-                            // Results in an error that's annoying to track
-                            // down.
 
-                            /*
-                            let newst = st.put(pre.constant().req_id, pre.constant().k, pre.constant().v);
-                            assert(newst.replies.contains_key(pre.constant().req_id));
-                            
-                            assert(pre.constant().gamma.reply_gnames.contains_key(pre.constant().req_id) &&
-                                 self.receipts[pre.constant().req_id].gname() == pre.constant().gamma.reply_gnames[pre.constant().req_id]);
-
-                            assert(forall |req_id:u64| #[trigger] newst.replies.contains_key(req_id) ==>
-                                    (#[trigger] st.replies.contains_key(req_id) || req_id == pre.constant().req_id));
-
-                            assert((forall |req_id:u64| #[trigger] newst.replies.contains_key(req_id) ==>
-                                 self.receipts.contains_key(req_id) &&
-                                 pre.constant().gamma.reply_gnames.contains_key(req_id) &&
-                                 self.receipts[req_id].gname() == pre.constant().gamma.reply_gnames[req_id]
-                                ) 
-                            );
-
-                            assert(
-                                self.inv(pre.constant().gamma,
-                                         st.put(pre.constant().req_id,
-                                                pre.constant().k, pre.constant().v,)));
-
-                             */
                             // re-establish invariant:
                             r = Or::Right((executed, witness_clone(&witness), Or::Left(ptsto)));
                         }
@@ -279,6 +254,70 @@ verus! {
                 });
                 return witness;
             }
+        }
+
+        // FIXME: get the proof for this to work.
+        proof fn get_fresh_req_id_fupd(tracked &mut self, gamma:ExactlyOnceGnames, st:KvErpcStateGhost) -> (tracked req_token:GhostToken)
+            requires old(self).inv(gamma, st),
+             st.next_fresh_req_id + 1 == add(st.next_fresh_req_id, 1),
+
+            ensures self.kv_auth.gname() == old(self).kv_auth.gname(),
+            self.inv(gamma, st.get_fresh_req_id().0),
+            gamma.req_gnames.contains_key(st.next_fresh_req_id) &&
+            req_token.gname() == gamma.req_gnames[st.next_fresh_req_id],
+
+            opens_invariants none
+        {
+            let tracked ret = self.client_toks.tracked_remove(st.next_fresh_req_id);
+
+            let st = st.get_fresh_req_id().0;
+            // assert();
+
+            // XXX: why is this the right trigger to pick? Figured this out by
+            // letting verus automatically pick a trigger.
+            assert forall|req_id: u64| req_id >= st.next_fresh_req_id implies
+                (self.client_toks.contains_key(req_id) &&
+                 gamma.req_gnames.contains_key(req_id) &&
+                 self.client_toks[req_id].gname() == #[trigger] gamma.req_gnames[req_id]
+                ) by {
+            }
+
+            // FIXME: definitely getting some weird SMT behavior here.
+            // If B and C are removed, then removing Z still makes the proof
+            // pass. If we keep B and C, then removing Z breaks the proof.
+
+            // Z
+            assert(self.kv_auth.kvs == st.m);
+
+            // FIXME: if this is commented, then the above `assert forall`
+            // fails.... Maybe the z3 queries are different between the two
+            // different cases, and by having the following assert, something
+            // gets triggered.
+
+            // A
+            assert (forall |req_id:u64| req_id >= st.next_fresh_req_id ==>
+             #[trigger] 
+             self.client_toks.contains_key(req_id) &&
+             gamma.req_gnames.contains_key(req_id) &&
+             self.client_toks[req_id].gname() == gamma.req_gnames[req_id]
+            );
+
+            // B
+            assert(forall |req_id:u64| !(#[trigger] st.replies.contains_key(req_id)) ==>
+             self.server_toks.contains_key(req_id) &&
+             gamma.reply_gnames.contains_key(req_id) &&
+             self.server_toks[req_id].gname() == gamma.reply_gnames[req_id]
+            );
+
+            // C
+            assert(forall |req_id:u64| (#[trigger] st.replies.contains_key(req_id)) ==>
+             self.receipts.contains_key(req_id) &&
+             gamma.reply_gnames.contains_key(req_id) &&
+             self.receipts[req_id].gname() == gamma.reply_gnames[req_id]
+            );
+
+            assert(self.inv(gamma, st));
+            return ret;
         }
     }
 
@@ -298,17 +337,32 @@ verus! {
             self.mu.get_pred() == gen_lock_pred(self)
         }
 
+        pub fn get_fresh_id(self) -> (r:(u64, Tracked<GhostToken>))
+            requires self.inv(),
+            ensures
+            self.gamma@.req_gnames.contains_key(r.0) &&
+            r.1@.gname() == self.gamma@.req_gnames[r.0],
+        {
+            let mut s = self.mu.lock();
+            assume(s.next_fresh_req_id + 1 == add(s.next_fresh_req_id, 1)); // assume the nat addition is the same as the u64 addition.
+            let tracked req_tok = (s.g.borrow_mut()).get_fresh_req_id_fupd(self.gamma@, s@);
+
+            let req_id = s.next_fresh_req_id;
+            s.next_fresh_req_id = s.next_fresh_req_id + 1;
+            self.mu.unlock(s);
+
+            return (req_id, Tracked(req_tok));
+        }
+
         pub fn put(&self, req_id:u64, k:u64, v:u64, pre:&PutPreCond) -> (witness:Tracked<GhostWitness>)
             requires
             self.inv(),
             self.gamma@.reply_gnames.contains_key(req_id),
-            pre.constant() == (PutInvConsts{
-                kv_gname: self.kv_gname@,
-                req_id: req_id,
-                k: k,
-                v: v,
-                gamma: self.gamma@,
-            })
+            pre.constant().kv_gname == self.kv_gname@,
+            pre.constant().req_id == req_id,
+            pre.constant().k == k,
+            pre.constant().v == v,
+            pre.constant().gamma == self.gamma@,
             ensures witness@.gname() == self.gamma@.reply_gnames[req_id],
         {
             let mut s = self.mu.lock();
@@ -341,6 +395,9 @@ verus! {
                 }
             }
         }
+    }
+
+    struct KvClient {
     }
 
     fn main() {
