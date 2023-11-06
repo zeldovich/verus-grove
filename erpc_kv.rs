@@ -123,6 +123,9 @@ verus! {
         kv_auth: GhostMapAuth<u64,u64>,
         client_toks: Map<u64,GhostToken>, // this is a big_sepM
         server_toks: Map<u64,GhostToken>,
+
+        // This was added after getting "new req_id" case of put to work:
+        receipts: Map<u64,GhostWitness>,
     }
 
     struct KvErpcState {
@@ -193,7 +196,15 @@ verus! {
              self.server_toks.contains_key(req_id) &&
              gamma.reply_gnames.contains_key(req_id) &&
              self.server_toks[req_id].gname() == gamma.reply_gnames[req_id]
-            )
+            ) &&
+
+            // This was added later:
+            (forall |req_id:u64| (#[trigger] st.replies.contains_key(req_id)) ==>
+             self.receipts.contains_key(req_id) &&
+             gamma.reply_gnames.contains_key(req_id) &&
+             self.receipts[req_id].gname() == gamma.reply_gnames[req_id]
+            ) &&
+            true
         }
 
         proof fn put_fupd(tracked &mut self, st:KvErpcStateGhost,
@@ -211,9 +222,7 @@ verus! {
         {
             let req_id = pre.constant().req_id;
             if st.replies.contains_key(pre.constant().req_id) {
-                // TODO: maintain and then get witness from server resources
-                assume(false);
-                return false_to_anything().get();
+                return witness_clone(self.receipts.tracked_borrow(pre.constant().req_id));
             } else { // case: first time seeing request
                 // get out token
                 let tracked server_tok = (self.server_toks).tracked_remove(req_id);
@@ -223,16 +232,38 @@ verus! {
                     match r {
                         Or::Left((unexecuted, mut ptsto)) => {
                             self.kv_auth.update(pre.constant().v, &mut ptsto);
+                            let tracked executed = token_freeze(unexecuted);
+                            witness = token_freeze(server_tok);
+                            self.receipts.tracked_insert(pre.constant().req_id, witness_clone(&witness));
+                            // NOTE(test): try replacing `req_id` with `k`.
+                            // Results in an error that's annoying to track
+                            // down.
 
-                            let tracked executed;
-                            executed = token_freeze(unexecuted);
+                            /*
+                            let newst = st.put(pre.constant().req_id, pre.constant().k, pre.constant().v);
+                            assert(newst.replies.contains_key(pre.constant().req_id));
+                            
+                            assert(pre.constant().gamma.reply_gnames.contains_key(pre.constant().req_id) &&
+                                 self.receipts[pre.constant().req_id].gname() == pre.constant().gamma.reply_gnames[pre.constant().req_id]);
 
-                            let tracked receipt;
-                            receipt = token_freeze(server_tok);
-                            witness = witness_clone(&receipt);
+                            assert(forall |req_id:u64| #[trigger] newst.replies.contains_key(req_id) ==>
+                                    (#[trigger] st.replies.contains_key(req_id) || req_id == pre.constant().req_id));
 
+                            assert((forall |req_id:u64| #[trigger] newst.replies.contains_key(req_id) ==>
+                                 self.receipts.contains_key(req_id) &&
+                                 pre.constant().gamma.reply_gnames.contains_key(req_id) &&
+                                 self.receipts[req_id].gname() == pre.constant().gamma.reply_gnames[req_id]
+                                ) 
+                            );
+
+                            assert(
+                                self.inv(pre.constant().gamma,
+                                         st.put(pre.constant().req_id,
+                                                pre.constant().k, pre.constant().v,)));
+
+                             */
                             // re-establish invariant:
-                            r = Or::Right((executed, receipt, Or::Left(ptsto)));
+                            r = Or::Right((executed, witness_clone(&witness), Or::Left(ptsto)));
                         }
                         Or::Right((executed, receipt, b)) => {
                             token_witness_false(&server_tok, &receipt);
