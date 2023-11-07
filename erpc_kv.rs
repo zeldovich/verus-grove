@@ -1,5 +1,4 @@
 use vstd::{prelude::*,invariant::*,thread::*};
-// use std::sync::Arc;
 mod lock;
 mod kv;
 // mod lmap;
@@ -18,6 +17,12 @@ verus! {
 
     impl GhostWitness {
         pub spec fn gname(&self) -> nat;
+    }
+
+    #[verifier(external_body)]
+    proof fn token_new() -> (tracked r:GhostToken)
+    {
+        unimplemented!();
     }
 
     #[verifier(external_body)]
@@ -86,7 +91,6 @@ verus! {
     impl InvariantPredicate<PutInvConsts, PutResources> for PutPredicate {
         open spec fn inv(c: PutInvConsts, r: PutResources) -> bool {
             c.gamma.req_gnames.contains_key(c.req_id) && // XXX(total map)
-            c.gamma.reply_gnames.contains_key(c.req_id) && // XXX(total map)
             match r {
                 Or::Left((unexecuted, ptsto)) => {
                     unexecuted.gname() == c.gamma.req_gnames[c.req_id] &&
@@ -94,6 +98,7 @@ verus! {
                     ptsto.k == c.k
                 }
                 Or::Right((executed, receipt, client_escrow)) => {
+                    c.gamma.reply_gnames.contains_key(c.req_id) && // XXX(total map)
                     executed.gname() == c.gamma.req_gnames[c.req_id] &&
                     receipt.gname() == c.gamma.reply_gnames[c.req_id]  &&
                     match client_escrow {
@@ -114,7 +119,7 @@ verus! {
     type PutPreCond = AtomicInvariant<PutInvConsts, PutResources, PutPredicate>;
 
     #[verifier(external_body)]
-    proof fn false_to_anything<A>() -> (tracked r:Tracked<A>)
+    proof fn false_to_anything<A>() -> (tracked r:A)
         requires false
     {
         unimplemented!();
@@ -126,7 +131,7 @@ verus! {
         server_toks: Map<u64,GhostToken>,
 
         // This was added after getting "new req_id" case of put to work:
-        receipts: Map<u64,GhostWitness>,
+        receipts: Map<u64,(GhostWitness,GhostWitness)>,
     }
 
     struct KvErpcState {
@@ -203,66 +208,69 @@ verus! {
             (forall |req_id:u64| (#[trigger] st.replies.contains_key(req_id)) ==>
              self.receipts.contains_key(req_id) &&
              gamma.reply_gnames.contains_key(req_id) &&
-             self.receipts[req_id].gname() == gamma.reply_gnames[req_id]
+             gamma.req_gnames.contains_key(req_id) &&
+             self.receipts[req_id].0.gname() == gamma.reply_gnames[req_id] &&
+             self.receipts[req_id].1.gname() == gamma.req_gnames[req_id]
             ) &&
             true
         }
 
         proof fn put_fupd(tracked &mut self, st:KvErpcStateGhost,
-                                  tracked pre:&PutPreCond) -> (tracked receipt:GhostWitness)
+                                  tracked pre:&PutPreCond) -> (tracked r:(GhostWitness, GhostWitness)) // receipt, executed
             requires old(self).inv(pre.constant().gamma, st),
             pre.constant().kv_gname == old(self).kv_auth.gname(),
 
             ensures
             self.kv_auth.gname() == old(self).kv_auth.gname(),
             pre.constant().gamma.reply_gnames.contains_key(pre.constant().req_id),
-            receipt.gname() == pre.constant().gamma.reply_gnames[pre.constant().req_id],
             self.inv(pre.constant().gamma, st.put(pre.constant().req_id, pre.constant().k, pre.constant().v,)),
+            r.0.gname() == pre.constant().gamma.reply_gnames[pre.constant().req_id],
+            r.1.gname() == pre.constant().gamma.req_gnames[pre.constant().req_id],
 
             opens_invariants any
         {
             let req_id = pre.constant().req_id;
             if st.replies.contains_key(pre.constant().req_id) {
-                return witness_clone(self.receipts.tracked_borrow(pre.constant().req_id));
+                let tracked receipt_executed = self.receipts.tracked_borrow(pre.constant().req_id);
+                return (witness_clone(&receipt_executed.0), witness_clone(&receipt_executed.1));
             } else { // case: first time seeing request
                 // get out token
                 let tracked server_tok = (self.server_toks).tracked_remove(req_id);
                 // open invariant, and fire the fupd with the points-to
                 let tracked witness;
+                let tracked executed;
                 open_atomic_invariant!(&pre => r => {
                     match r {
                         Or::Left((unexecuted, mut ptsto)) => {
                             self.kv_auth.update(pre.constant().v, &mut ptsto);
-                            let tracked executed = token_freeze(unexecuted);
+                            executed = token_freeze(unexecuted);
                             witness = token_freeze(server_tok);
-                            self.receipts.tracked_insert(pre.constant().req_id, witness_clone(&witness));
+                            self.receipts.tracked_insert(pre.constant().req_id, (witness_clone(&witness), witness_clone(&executed)));
 
                             // re-establish invariant:
-                            r = Or::Right((executed, witness_clone(&witness), Or::Left(ptsto)));
+                            r = Or::Right((witness_clone(&executed), witness_clone(&witness), Or::Left(ptsto)));
                         }
-                        Or::Right((executed, receipt, b)) => {
+                        Or::Right((executed_in, receipt, b)) => {
                             token_witness_false(&server_tok, &receipt);
                             assert(false);
-                            witness = witness_clone(&executed);
-                            r = Or::Right((executed, receipt, b));
-                            // TODO: this stuff is here so the rest of
-                            // the the compiler doesn't complain in the
-                            // rest of the code that "r is moved" and
-                            // "my_ptsto may be uninitialized".
+                            r = false_to_anything();
+                            witness = false_to_anything();
+                            executed = false_to_anything();
                         }
                     }
                 });
-                return witness;
+                return (witness, executed);
             }
         }
 
-        // FIXME: get the proof for this to work.
+        // FIXME: something weird here; this fails if verified on its own with --verify-function
         proof fn get_fresh_req_id_fupd(tracked &mut self, gamma:ExactlyOnceGnames, st:KvErpcStateGhost) -> (tracked req_token:GhostToken)
             requires old(self).inv(gamma, st),
              st.next_fresh_req_id + 1 == add(st.next_fresh_req_id, 1),
 
             ensures self.kv_auth.gname() == old(self).kv_auth.gname(),
             self.inv(gamma, st.get_fresh_req_id().0),
+            // gamma.reply_gnames.contains_key(st.next_fresh_req_id), // XXX(total map)
             gamma.req_gnames.contains_key(st.next_fresh_req_id) &&
             req_token.gname() == gamma.req_gnames[st.next_fresh_req_id],
 
@@ -309,12 +317,12 @@ verus! {
              self.server_toks[req_id].gname() == gamma.reply_gnames[req_id]
             );
 
-            // C
-            assert(forall |req_id:u64| (#[trigger] st.replies.contains_key(req_id)) ==>
-             self.receipts.contains_key(req_id) &&
-             gamma.reply_gnames.contains_key(req_id) &&
-             self.receipts[req_id].gname() == gamma.reply_gnames[req_id]
-            );
+            // // C
+            // assert(forall |req_id:u64| (#[trigger] st.replies.contains_key(req_id)) ==>
+             // self.receipts.contains_key(req_id) &&
+             // gamma.reply_gnames.contains_key(req_id) &&
+             // self.receipts[req_id].gname() == gamma.reply_gnames[req_id]
+            // );
 
             assert(self.inv(gamma, st));
             return ret;
@@ -337,11 +345,12 @@ verus! {
             self.mu.get_pred() == gen_lock_pred(self)
         }
 
-        pub fn get_fresh_id(self) -> (r:(u64, Tracked<GhostToken>))
+        pub fn get_fresh_id_rpc(&self) -> (r:(u64, Tracked<GhostToken>))
             requires self.inv(),
             ensures
             self.gamma@.req_gnames.contains_key(r.0) &&
             r.1@.gname() == self.gamma@.req_gnames[r.0],
+            // self.gamma@.reply_gnames.contains_key(r.0), // XXX(total map)
         {
             let mut s = self.mu.lock();
             assume(s.next_fresh_req_id + 1 == add(s.next_fresh_req_id, 1)); // assume the nat addition is the same as the u64 addition.
@@ -354,19 +363,20 @@ verus! {
             return (req_id, Tracked(req_tok));
         }
 
-        pub fn put(&self, req_id:u64, k:u64, v:u64, pre:&PutPreCond) -> (witness:Tracked<GhostWitness>)
+        pub fn put_rpc(&self, req_id:u64, k:u64, v:u64, Tracked(pre):Tracked<&PutPreCond>) -> (r:(Tracked<GhostWitness>, Tracked<GhostWitness>))
             requires
             self.inv(),
-            self.gamma@.reply_gnames.contains_key(req_id),
+            // self.gamma@.reply_gnames.contains_key(req_id),
             pre.constant().kv_gname == self.kv_gname@,
             pre.constant().req_id == req_id,
             pre.constant().k == k,
             pre.constant().v == v,
             pre.constant().gamma == self.gamma@,
-            ensures witness@.gname() == self.gamma@.reply_gnames[req_id],
+            ensures r.0@.gname() == self.gamma@.reply_gnames[req_id],
+            r.1@.gname() == self.gamma@.req_gnames[req_id],
         {
             let mut s = self.mu.lock();
-            let tracked witness = (s.g.borrow_mut()).put_fupd(s@, &pre);
+            let tracked (witness, executed) = (s.g.borrow_mut()).put_fupd(s@, &pre);
             match s.replies.get(req_id) {
                 Some(_) => {},
                 None => {
@@ -375,10 +385,10 @@ verus! {
                 }
             }
             self.mu.unlock(s);
-            return Tracked(witness);
+            return (Tracked(witness), Tracked(executed));
         }
 
-        pub fn get(&self, req_id:u64, k:u64) -> u64 {
+        pub fn get_rpc(&self, req_id:u64, k:u64) -> u64 {
             let mut s = self.mu.lock();
             match s.replies.get(req_id) {
                 Some(resp) => {
@@ -398,6 +408,132 @@ verus! {
     }
 
     struct KvClient {
+        rpcClient:std::sync::Arc<KvErpcServer>,
+        kv_gname:Ghost<nat>,
+    }
+
+    proof fn alloc_put_pre(tracked ptsto:GhostMapPointsTo<u64,u64>,
+                           tracked unexecuted:GhostToken,
+                           req_id:u64,
+                           v:u64,
+                           gamma:ExactlyOnceGnames) -> (tracked r:(PutPreCond, GhostToken))
+        requires
+        // gamma.reply_gnames.contains_key(req_id), // XXX(total map)
+        gamma.req_gnames.contains_key(req_id) &&
+        unexecuted.gname() == gamma.req_gnames[req_id],
+
+        ensures
+        // gamma.reply_gnames.contains_key(req_id),
+        r.0.constant().kv_gname == ptsto.gname(),
+        r.0.constant().req_id == req_id,
+        r.0.constant().k == ptsto.k,
+        r.0.constant().v == v,
+        r.0.constant().gamma == gamma,
+        r.0.constant().client_escrow_gname == r.1.gname(),
+    {
+        let tracked client_escrow_token = token_new();
+
+        let tracked i = AtomicInvariant::new(PutInvConsts{
+            k: ptsto.k,
+            v: v,
+            req_id: req_id,
+            kv_gname: ptsto.gname(),
+            gamma: gamma,
+            client_escrow_gname: client_escrow_token.gname(),
+        },
+                                             Or::Left((unexecuted, ptsto)),
+                                             37); // namespace
+        (i, client_escrow_token)
+    }
+
+    proof fn claim_put_post(tracked pre:&PutPreCond,
+                            tracked receipt:GhostWitness,
+                            tracked executed:GhostWitness,
+                            tracked escrow_tok:GhostToken,
+                           ) -> (tracked ptsto:GhostMapPointsTo<u64,u64>)
+        requires
+        // pre.constant().gamma.reply_gnames.contains_key(pre.constant().req_id) && // XXX(total map)
+        receipt.gname() == pre.constant().gamma.reply_gnames[pre.constant().req_id],
+        pre.constant().gamma.req_gnames.contains_key(pre.constant().req_id) && // XXX(total map)
+        executed.gname() == pre.constant().gamma.req_gnames[pre.constant().req_id],
+        escrow_tok.gname() == pre.constant().client_escrow_gname,
+
+        ensures
+        ptsto.k == pre.constant().k,
+        ptsto.v == pre.constant().v,
+        ptsto.gname() == pre.constant().kv_gname,
+
+        opens_invariants any
+    {
+        let tracked ptsto_ret;
+        open_atomic_invariant!(&pre => r => {
+            match r {
+                Or::Left((unexecuted, ptsto)) => {
+                    token_witness_false(&unexecuted, &executed);
+                    assert(false);
+                    ptsto_ret = false_to_anything();
+                    r = false_to_anything();
+                }
+                Or::Right((executed, receipt, Or::Right(claimed))) => {
+                    token_witness_false(&escrow_tok, &claimed);
+                    assert(false);
+                    ptsto_ret = false_to_anything();
+                    r = false_to_anything();
+                }
+                Or::Right((executed, receipt, Or::Left(ptsto))) => {
+                    ptsto_ret = ptsto;
+                    r = Or::Right((executed, receipt, Or::Right(token_freeze(escrow_tok))));
+                }
+            }
+        });
+        return ptsto_ret;
+    }
+
+    impl KvClient {
+        pub closed spec fn inv(self) -> bool {
+            (*self.rpcClient).inv() &&
+                (*self.rpcClient).kv_gname == self.kv_gname
+        }
+
+        // Is there some way to have the ptsto be a &mut, rather than passing it in and out?
+        fn put(&self, k:u64, v:u64, Tracked(ptsto):Tracked<GhostMapPointsTo<u64,u64>>)
+            -> (ptsto_final:Tracked<GhostMapPointsTo<u64,u64>>)
+            
+            requires
+                self.inv(),
+                ptsto.gname() == self.kv_gname@,
+                ptsto.k == k,
+
+            ensures ptsto_final@.k == k,
+            ptsto_final@.v == v,
+            ptsto_final@.gname() == ptsto.gname()
+        {
+            let (req_id, Tracked(req_token)) = (*self.rpcClient).get_fresh_id_rpc();
+
+            // allocate invariant
+            let tracked (pre, escrow_tok) = alloc_put_pre(ptsto, req_token, req_id, v, (*self.rpcClient).gamma@);
+            let rpcClient2 = self.rpcClient.clone();
+            let tracked pre2 = &pre;
+
+            // simulate unreliable RPC by spawning a background thread making
+            // RPCs whose responses we never use.
+            // FIXME: this fails because of "error: `pre` does not live long
+            // enough". But, `pre` is ghost state, and it should never
+            // disappear. Maybe can put it in an Arc as a workaround? Not sure
+            // how that'll work with tracked state.
+            // spawn(move||
+            // {
+            //     loop {
+            //         (*rpcClient2).put_rpc(req_id, k, v, Tracked(pre2));
+            //     }
+            // });
+
+            // the call that actually gets a successful response
+            let (Tracked(receipt), Tracked(executed)) = (*self.rpcClient).put_rpc(req_id, k, v, Tracked(&pre));
+
+            let tracked ptsto = claim_put_post(&pre, receipt, executed, escrow_tok);
+            return Tracked(ptsto);
+        }
     }
 
     fn main() {
