@@ -519,10 +519,6 @@ verus! {
 
             // simulate unreliable RPC by spawning a background thread making
             // RPCs whose responses we never use.
-            // FIXME: this fails because of "error: `pre` does not live long
-            // enough". But, `pre` is ghost state, and it should never
-            // disappear. Maybe can put it in an Arc as a workaround? Not sure
-            // how that'll work with tracked state.
             spawn(move||
             {
                 loop
