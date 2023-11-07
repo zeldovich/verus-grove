@@ -53,6 +53,14 @@ verus! {
         unimplemented!();
     }
 
+    #[verifier(external_body)]
+    proof fn false_to_anything<A>() -> (tracked r:A)
+        requires false
+    {
+        unimplemented!();
+    }
+
+
     enum Or<A,B> {
         Left(A),
         Right(B),
@@ -117,13 +125,6 @@ verus! {
     }
 
     type PutPreCond = AtomicInvariant<PutInvConsts, PutResources, PutPredicate>;
-
-    #[verifier(external_body)]
-    proof fn false_to_anything<A>() -> (tracked r:A)
-        requires false
-    {
-        unimplemented!();
-    }
 
     struct KvErpcGhostResources {
         kv_auth: GhostMapAuth<u64,u64>,
@@ -512,8 +513,9 @@ verus! {
 
             // allocate invariant
             let tracked (pre, escrow_tok) = alloc_put_pre(ptsto, req_token, req_id, v, (*self.rpcClient).gamma@);
+            let Tracked(pre) = Tracked(std::sync::Arc::new(pre));
             let rpcClient2 = self.rpcClient.clone();
-            let tracked pre2 = &pre;
+            let tracked pre2 = pre.clone();
 
             // simulate unreliable RPC by spawning a background thread making
             // RPCs whose responses we never use.
@@ -521,17 +523,34 @@ verus! {
             // enough". But, `pre` is ghost state, and it should never
             // disappear. Maybe can put it in an Arc as a workaround? Not sure
             // how that'll work with tracked state.
-            // spawn(move||
-            // {
-            //     loop {
-            //         (*rpcClient2).put_rpc(req_id, k, v, Tracked(pre2));
-            //     }
-            // });
+            spawn(move||
+            {
+                loop
+                    invariant
+                    // FIXME: is there a way to avoid all this? Would like to
+                    // take an immutable ghost snapshot of the state outside the
+                    // loop, and maintain that pre3.constant() remains equal to
+                    // this snapshot.
+                    pre2.constant().gamma == rpcClient2.gamma@,
+                    pre2.constant().v == v,
+                    pre2.constant().k == k,
+                    pre2.constant().kv_gname == rpcClient2.kv_gname@,
+                    pre2.constant().req_id == req_id,
+                    rpcClient2.inv(),
+                {
+                    let rpcClient = rpcClient2.clone();
+                    let tracked pre = pre2.clone();
+                    spawn(move||
+                    {
+                        (*rpcClient).put_rpc(req_id, k, v, Tracked(&(*pre)));
+                    });
+                }
+            });
 
             // the call that actually gets a successful response
-            let (Tracked(receipt), Tracked(executed)) = (*self.rpcClient).put_rpc(req_id, k, v, Tracked(&pre));
+            let (Tracked(receipt), Tracked(executed)) = (*self.rpcClient).put_rpc(req_id, k, v, Tracked(&(*pre)));
 
-            let tracked ptsto = claim_put_post(&pre, receipt, executed, escrow_tok);
+            let tracked ptsto = claim_put_post(&(*pre), receipt, executed, escrow_tok);
             return Tracked(ptsto);
         }
     }
