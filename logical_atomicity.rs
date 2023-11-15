@@ -8,7 +8,7 @@ verus! {
         _pred:std::marker::PhantomData<Pred>,
     }
 
-    spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
+    pub open spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
         if m.contains_key(k) {
             m[k]
         }
@@ -69,16 +69,20 @@ verus! {
         // requires [ ∀ σ, P σ ==∗ P σ' ∗ Φ(lookup(σ,k) == exp) ]
         // ensures  Φ
         #[verifier(external_body)]
-        pub fn cput_hocap<PhiRes, F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> Tracked<(P, PhiRes)>>
+        pub fn get_and_put_hocap<PhiRes, F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> Tracked<(P, PhiRes)>>
             (&self, k:u64, exp:u64, v:u64, au:F,
-             phiPred: Ghost<FnSpec(bool, PhiRes) ->  bool>, // XXX: curry?
-            ) -> (ret:(bool, Tracked<PhiRes>))
+             phiPred: Ghost<FnSpec(u64, PhiRes) ->  bool>, // XXX: curry?
+            ) -> (ret:(u64, Tracked<PhiRes>))
 
             requires
             self.inv(),
             forall |sigma:Ghost<_>, res:Tracked<_>, au_ret:Tracked<_>|
             (#[trigger] Pred::inv(self.constant(), (res@, sigma@)) ==> au.requires((res, sigma))) &&
-            (#[trigger] au.ensures((res, sigma), au_ret)) ==> Pred::inv(self.constant(), (au_ret@.0, sigma@.insert(k,v))),
+            (#[trigger] au.ensures((res, sigma), au_ret) ==>
+                 Pred::inv(self.constant(), (au_ret@.0, sigma@.insert(k,v))) &&
+                 phiPred@(lookup(sigma@, k), au_ret@.1)
+            )
+            ,
 
             ensures phiPred@(ret.0, ret.1@)
         {
@@ -123,14 +127,22 @@ verus! {
     type PhiRes<R> = Or<R,()>;
 
     // phiPred: (FnSpec(bool, PhiRes) ->  bool)
-    spec fn phi_pred<R>() -> FnSpec(bool, PhiRes<R>) -> bool {
-        |ret:bool, res:PhiRes<R>| {
-            true
+    spec fn phi_pred<R>() -> FnSpec(u64, PhiRes<R>) -> bool {
+        |ret:u64, res:PhiRes<R>| {
+            match res {
+                Or::Left(_) => true,
+                Or::Right(_) => ret != 0,
+            }
         }
     }
 
-    fn trylock_cput_au<R>(res:Tracked<LockInvRes<R>>, sigma:Ghost<Map<u64,u64>>) ->
-        (x:Tracked<(LockInvRes<R>, PhiRes<R>)>)
+    fn trylock_cput_au<R>(res:Tracked<LockInvRes<R>>, sigma:Ghost<Map<u64,u64>>, Ghost(c):Ghost<LockInvConsts>) ->
+        (ret:Tracked<(LockInvRes<R>, PhiRes<R>)>)
+
+        requires LockInvPredicate::inv(c, (res@, sigma@))
+
+        ensures LockInvPredicate::inv(c, (ret@.0, sigma@.insert(37,1))),
+        phi_pred::<R>()(lookup(sigma@, 37), ret@.1)
     {
         let tracked phiRes;
         proof {
@@ -159,18 +171,19 @@ verus! {
         -> Tracked<R>
     {
        loop {
-           let au = |res:Tracked<_>, sigma| -> Tracked<_>
-               requires false
-               // FIXME: requires/ensures
+           let ghost c = kv.constant();
+           let au = |res:Tracked<_>, sigma:Ghost<_>| -> (ret:Tracked<(LockInvRes<R>,_)>)
+               requires LockInvPredicate::inv(c, (res@, sigma@))
+
+               ensures LockInvPredicate::inv(c, (ret@.0, sigma@.insert(37,1))),
+               phi_pred::<R>()(lookup(sigma@, 37), ret@.1)
            {
-               trylock_cput_au(res, sigma)
+               trylock_cput_au(res, sigma, Ghost(c))
            };
 
-           // assert(forall |sigma:Ghost<_>, res:Tracked<_>| (#[trigger] LockInvPredicate::inv(kv.constant(), (res@, sigma@)) ==> au.requires((res, sigma))));
-           let ret = kv.cput_hocap(37, 0, 1, au, Ghost(phi_pred()));
-           // assert(forall |sigma:Ghost<_>, res:Tracked<_>| (#[trigger] LockInvPredicate::inv(kv.constant(), (res@, sigma@)) ==> au.requires((res, sigma))));
+           let ret = kv.get_and_put_hocap(37, 0, 1, au, Ghost(phi_pred()));
 
-           if ret.0 == true {
+           if ret.0 == 0 {
                let tracked r;
                proof {
                    match ret.1.get() {
