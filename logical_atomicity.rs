@@ -69,18 +69,18 @@ verus! {
         // requires [ ∀ σ, P σ ==∗ P σ' ∗ Φ(lookup(σ,k) == exp) ]
         // ensures  Φ
         #[verifier(external_body)]
-        pub fn cput_hocap<PhiRes, F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> (Tracked<P>, PhiRes) >
+        pub fn cput_hocap<PhiRes, F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> Tracked<(P, PhiRes)>>
             (&self, k:u64, exp:u64, v:u64, au:F,
-             phiPred: (FnSpec(bool, PhiRes) ->  bool), // XXX: curry?
-            ) -> (ret:(bool, PhiRes))
+             phiPred: Ghost<FnSpec(bool, PhiRes) ->  bool>, // XXX: curry?
+            ) -> (ret:(bool, Tracked<PhiRes>))
 
             requires
             self.inv(),
-                forall |sigma:Ghost<_>, res:Tracked<_>, res_prime:Tracked<_>, phi|
-                (#[trigger] Pred::inv(self.constant(), (res@, sigma@)) ==> au.requires((res, sigma))) &&
-                (#[trigger] au.ensures((res, sigma), (res_prime, phi)) ==> Pred::inv(self.constant(), (res_prime@, sigma@.insert(k,v)))),
+            forall |sigma:Ghost<_>, res:Tracked<_>, au_ret:Tracked<_>|
+            (#[trigger] Pred::inv(self.constant(), (res@, sigma@)) ==> au.requires((res, sigma))) &&
+            (#[trigger] au.ensures((res, sigma), au_ret)) ==> Pred::inv(self.constant(), (au_ret@.0, sigma@.insert(k,v))),
 
-            ensures
+            ensures phiPred@(ret.0, ret.1@)
         {
             unimplemented!();
         }
@@ -108,6 +108,7 @@ verus! {
     // InvariantPredicate<(P,Map<u64,u64>)
     impl<R> InvariantPredicate<LockInvConsts, (LockInvRes<R>, Map<u64,u64>)> for LockInvPredicate {
         closed spec fn inv(c: LockInvConsts, r: (LockInvRes<R>, Map<u64,u64>)) -> bool {
+            // if unlocked, the invariant must have the resource
             if lookup(r.1, 37) == 0 {
                 match r.0 {
                     Or::Left(_) => true,
@@ -129,51 +130,57 @@ verus! {
     }
 
     fn trylock_cput_au<R>(res:Tracked<LockInvRes<R>>, sigma:Ghost<Map<u64,u64>>) ->
-        (Tracked<LockInvRes<R>>, PhiRes<R>)
+        (x:Tracked<(LockInvRes<R>, PhiRes<R>)>)
     {
-        match res@ {
-            Or::Left(r) => {
-                return (Tracked(Or::Right(())), Or::Left(r));
-            }
-            Or::Right(()) => {
-                return (Tracked(Or::Right(())), Or::Right(()));
+        let tracked phiRes;
+        proof {
+            match res.get() {
+                Or::Left(r) => {
+                    // ret = Tracked(Or::Right(()));, Or::Left(r);
+                    phiRes = Or::Left(r);
+                }
+                Or::Right(()) => {
+                    // ret = (Tracked(Or::Right(())), Or::Right(()));
+                    phiRes = Or::Right(());
+                }
             }
         }
+        return Tracked((Or::Right(()), phiRes));
+    }
+
+    #[verifier(external_body)]
+    proof fn false_to_anything<A>() -> (tracked r:A)
+        requires false
+    {
+        unimplemented!();
     }
 
     fn spinlock_acquire<R>(kv:&KvClient<LockInvRes<R>, LockInvConsts, LockInvPredicate>)
         -> Tracked<R>
     {
        loop {
-           // F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> (Tracked<P>, PhiRes) >
-           // (&self, k:u64, exp:u64, v:u64, au:Tracked<F>, phiPred: (FnSpec(bool, PhiRes) ->  bool), ) -> (ret:(bool, PhiRes))
-           // let au = |res:Tracked<_>, sigma| -> (Tracked<LockInvRes<R>>, PhiRes<R>)
-           //     // FIXME: requires/ensures
-           // {
-           //     match res@ {
-           //         Or::Left(r) => {
-           //             return (Tracked(Or::Right(())), Or::Left(r));
-           //         }
-           //         Or::Right(()) => {
-           //             return (Tracked(Or::Right(())), Or::Right(()));
-           //         }
-           //     }
-           // };
+           let au = |res:Tracked<_>, sigma| -> Tracked<_>
+               requires false
+               // FIXME: requires/ensures
+           {
+               trylock_cput_au(res, sigma)
+           };
 
-           // let phi_pred= |ret, res| {
-           //    true
-           // };
-           let ret = kv.cput_hocap(37, 0, 1, trylock_cput_au, phi_pred());
+           // assert(forall |sigma:Ghost<_>, res:Tracked<_>| (#[trigger] LockInvPredicate::inv(kv.constant(), (res@, sigma@)) ==> au.requires((res, sigma))));
+           let ret = kv.cput_hocap(37, 0, 1, au, Ghost(phi_pred()));
+           // assert(forall |sigma:Ghost<_>, res:Tracked<_>| (#[trigger] LockInvPredicate::inv(kv.constant(), (res@, sigma@)) ==> au.requires((res, sigma))));
+
            if ret.0 == true {
                let tracked r;
                proof {
-                   match ret.1 {
+                   match ret.1.get() {
                        Or::Left(r2) => {
                            r = r2;
                        }
                        Or::Right(()) => {
                            assert(false);
-                       }
+                           r = false_to_anything();
+                      }
                    }
                }
                return Tracked(r)
