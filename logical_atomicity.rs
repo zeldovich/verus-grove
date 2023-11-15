@@ -51,16 +51,16 @@ verus! {
         // requires [ ∀ σ, P σ ==∗ P (σ.insert(k,v)) ∗ Φ ]
         // ensures  Φ
         #[verifier(external_body)]
-        pub fn put_hocap<Phi, F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> (Tracked<P>, Phi) >
-            (&self, k:u64, v:u64, au:Tracked<F>) -> (ret:Phi)
+        pub fn put_hocap<Phi, F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> Tracked<(P, Phi)>>
+            (&self, k:u64, v:u64, au:F) -> (ret:Tracked<Phi>)
 
             requires
             self.inv(),
             // XXX: can't do it this way
             // forall |sigma, res| Pred::inv((res, sigma), old(self).constant()) ==> au@.requires((Tracked(res), Ghost(sigma))),
-            forall |sigma:Ghost<_>, res:Tracked<_>, res_prime:Tracked<_>, phi|
-            (#[trigger] Pred::inv(self.constant(), (res@, sigma@)) ==> au@.requires((res, sigma))) &&
-            (#[trigger] au@.ensures((res, sigma), (res_prime, phi)) ==> Pred::inv(self.constant(), (res_prime@, sigma@.insert(k,v)))),
+            forall |sigma:Ghost<_>, res:Tracked<_>, au_ret:Tracked<_>|
+            (#[trigger] Pred::inv(self.constant(), (res@, sigma@)) ==> au.requires((res, sigma))) &&
+            (#[trigger] au.ensures((res, sigma), au_ret) ==> Pred::inv(self.constant(), (au_ret@.0, sigma@.insert(k,v)))),
         {
             unimplemented!();
         }
@@ -136,7 +136,7 @@ verus! {
         }
     }
 
-    fn trylock_cput_au<R>(res:Tracked<LockInvRes<R>>, sigma:Ghost<Map<u64,u64>>, Ghost(c):Ghost<LockInvConsts>) ->
+    fn trylock_get_and_put_au<R>(res:Tracked<LockInvRes<R>>, sigma:Ghost<Map<u64,u64>>, Ghost(c):Ghost<LockInvConsts>) ->
         (ret:Tracked<(LockInvRes<R>, PhiRes<R>)>)
 
         requires LockInvPredicate::inv(c, (res@, sigma@))
@@ -178,7 +178,7 @@ verus! {
                ensures LockInvPredicate::inv(c, (ret@.0, sigma@.insert(37,1))),
                phi_pred::<R>()(lookup(sigma@, 37), ret@.1)
            {
-               trylock_cput_au(res, sigma, Ghost(c))
+               trylock_get_and_put_au(res, sigma, Ghost(c))
            };
 
            let ret = kv.get_and_put_hocap(37, 0, 1, au, Ghost(phi_pred()));
@@ -199,6 +199,19 @@ verus! {
                return Tracked(r)
            }
        }
+    }
+
+    fn spinlock_release<R>(kv:&KvClient<LockInvRes<R>, LockInvConsts, LockInvPredicate>, r:Tracked<R>)
+    {
+        let ghost c = kv.constant();
+        let au = |res:Tracked<_>, sigma:Ghost<_>| -> (ret:Tracked<(LockInvRes<R>,())>)
+            requires LockInvPredicate::inv(c, (res@, sigma@))
+            ensures LockInvPredicate::inv(c, (ret@.0, sigma@.insert(37,0)))
+        {
+            Tracked((Or::Left(r.get()), ()))
+        };
+
+        kv.put_hocap(37, 0, au,);
     }
 
     fn main() {}
