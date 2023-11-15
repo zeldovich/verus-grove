@@ -17,10 +17,6 @@ verus! {
         }
     }
 
-    spec fn gauge_eq(m1:Map<u64,u64>, m2:Map<u64,u64>) -> bool {
-        forall|k:u64| lookup(m1, k) == lookup(m2, k)
-    }
-
     // Q: put traits only in `impl` or also on struct?
     impl<P, C, Pred:InvariantPredicate<C, (P,Map<u64,u64>)>> KvClient<P,C,Pred> {
         pub spec fn constant(self) -> C;
@@ -29,25 +25,7 @@ verus! {
             true // gauge_eq(self.m@, self.ghostKvs@.kvs)
         }
 
-        // #[verifier(external_body)]
-        // proof fn example_fupd(sigma:Map<u64,u64>, tracked res:P) -> (ret:P)
-        //     requires Pred::inv((res, sigma), ())
-        //     ensures Pred::inv((res, sigma.insert(2u64,37u64)), ())
-        //     opens_invariants any
-        // {
-        //     todo!();
-        // }
-
-        #[verifier(external_body)]
-        proof fn example_fupd2(args:(Ghost<Map<u64,u64>>, Tracked<P>), c:C) -> (ret:P)
-            requires Pred::inv(c, (args.1@, args.0@))
-            ensures Pred::inv(c, (ret, args.0@.insert(2u64,37u64)))
-            opens_invariants any
-        {
-            todo!();
-        }
-
-        // TODO: predicate-wrap Phi?
+        // XXX: no need to predicate-wrap Phi here for the spinlock use-case.
         // requires [ ∀ σ, P σ ==∗ P (σ.insert(k,v)) ∗ Φ ]
         // ensures  Φ
         #[verifier(external_body)]
@@ -65,12 +43,11 @@ verus! {
             unimplemented!();
         }
 
-        // TODO: need to have a FnSpec or Trait predicate for Φ as well
-        // requires [ ∀ σ, P σ ==∗ P σ' ∗ Φ(lookup(σ,k) == exp) ]
+        // requires [ ∀ σ, P σ ==∗ P σ' ∗ Φ(lookup(σ,k)) ]
         // ensures  Φ
         #[verifier(external_body)]
         pub fn get_and_put_hocap<PhiRes, F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> Tracked<(P, PhiRes)>>
-            (&self, k:u64, exp:u64, v:u64, au:F,
+            (&self, k:u64, v:u64, au:F,
              phiPred: Ghost<FnSpec(u64, PhiRes) ->  bool>, // XXX: curry?
             ) -> (ret:(u64, Tracked<PhiRes>))
 
@@ -136,30 +113,6 @@ verus! {
         }
     }
 
-    fn trylock_get_and_put_au<R>(res:Tracked<LockInvRes<R>>, sigma:Ghost<Map<u64,u64>>, Ghost(c):Ghost<LockInvConsts>) ->
-        (ret:Tracked<(LockInvRes<R>, PhiRes<R>)>)
-
-        requires LockInvPredicate::inv(c, (res@, sigma@))
-
-        ensures LockInvPredicate::inv(c, (ret@.0, sigma@.insert(37,1))),
-        phi_pred::<R>()(lookup(sigma@, 37), ret@.1)
-    {
-        let tracked phiRes;
-        proof {
-            match res.get() {
-                Or::Left(r) => {
-                    // ret = Tracked(Or::Right(()));, Or::Left(r);
-                    phiRes = Or::Left(r);
-                }
-                Or::Right(()) => {
-                    // ret = (Tracked(Or::Right(())), Or::Right(()));
-                    phiRes = Or::Right(());
-                }
-            }
-        }
-        return Tracked((Or::Right(()), phiRes));
-    }
-
     #[verifier(external_body)]
     proof fn false_to_anything<A>() -> (tracked r:A)
         requires false
@@ -172,16 +125,27 @@ verus! {
     {
        loop {
            let ghost c = kv.constant();
-           let au = |res:Tracked<_>, sigma:Ghost<_>| -> (ret:Tracked<(LockInvRes<R>,_)>)
+           let au = |res:Tracked<_>, sigma:Ghost<_>| -> (ret:Tracked<(LockInvRes<R>,PhiRes<R>)>)
                requires LockInvPredicate::inv(c, (res@, sigma@))
 
                ensures LockInvPredicate::inv(c, (ret@.0, sigma@.insert(37,1))),
                phi_pred::<R>()(lookup(sigma@, 37), ret@.1)
            {
-               trylock_get_and_put_au(res, sigma, Ghost(c))
+               let tracked phiRes;
+               proof {
+                   match res.get() {
+                       Or::Left(r) => {
+                           phiRes = Or::Left(r);
+                       }
+                       Or::Right(()) => {
+                           phiRes = Or::Right(());
+                       }
+                   }
+               }
+               return Tracked((Or::Right(()), phiRes));
            };
 
-           let ret = kv.get_and_put_hocap(37, 0, 1, au, Ghost(phi_pred()));
+           let ret = kv.get_and_put_hocap(37, 1, au, Ghost(phi_pred()));
 
            if ret.0 == 0 {
                let tracked r;
