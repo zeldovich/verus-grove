@@ -72,6 +72,8 @@ verus! {
             let mut s = self.mu.lock();
             let tracked (res, phi) = au.call_once(s.m@, s.res.get()).1.get();
             s.m.insert(k, v);
+            s.res = Tracked(res);
+            self.mu.unlock(s);
             return Tracked(phi);
         }
 
@@ -104,6 +106,7 @@ verus! {
             };
             let tracked (res, phi) = au.call_once(s.m@, s.res.get()).1.get();
             s.m.insert(k, v);
+            s.res = Tracked(res);
             return (oldval, Tracked(phi));
         }
 
