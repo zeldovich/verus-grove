@@ -1,10 +1,20 @@
 use vstd::{prelude::*, invariant::*};
+mod kv;
+use kv::lmap;
+mod lock;
 
 verus! {
-    pub struct KvClient<P, C, Pred> {
-        _p:std::marker::PhantomData<P>,
-        _c:std::marker::PhantomData<C>,
-        _pred:std::marker::PhantomData<Pred>,
+    // XXX: what about a PredicateGuarded sort-of thing here?
+    // Want `P : σ → iProp`.
+    pub struct KvMapInner<P> {
+        m: lmap::LMap<u64,u64>,
+        res: Tracked<P>,
+    }
+
+    spec fn gen_kv_lock_pred<P,C,Pred: InvariantPredicate<C, (P,Map<u64,u64>)>>
+        (c:C) -> FnSpec(KvMapInner<P>) -> bool {
+        |st:KvMapInner<P>|
+        Pred::inv(c, (st.res@, st.m@))
     }
 
     pub open spec fn lookup(m:Map<u64,u64>, k:u64) -> u64 {
@@ -16,45 +26,57 @@ verus! {
         }
     }
 
-    // FnProof(x) -> Y
-
     pub trait AtomicUpdate<Ag, At, Rg, Rt> {
         spec fn requires(&self, ag:Ag, at:At) -> bool;
         spec fn ensures(&self, ag:Ag, at:At, rg:Rg, rt:Rt) -> bool;
         proof fn call_once(tracked self, ag:Ag, tracked at:At) -> (tracked r:(Ghost<Rg>, Tracked<Rt>)) where Self: std::marker::Sized
             requires self.requires(ag, at)
             ensures self.ensures(ag, at, r.0@, r.1@);
+            // opens_invariants any
+    }
+
+    #[verifier::reject_recursive_types(P)]
+    pub struct KvMap<P, C, Pred> {
+        mu: lock::Lock<KvMapInner<P>>,
+        _p:std::marker::PhantomData<P>,
+        _c:std::marker::PhantomData<C>,
+        _pred:std::marker::PhantomData<Pred>,
     }
 
     // Q: put traits only in `impl` or also on struct?
-    impl<P, C, Pred:InvariantPredicate<C, (P,Map<u64,u64>)>> KvClient<P,C,Pred> {
+    impl<P, C, Pred:InvariantPredicate<C, (P,Map<u64,u64>)>> KvMap<P,C,Pred> {
         pub spec fn constant(self) -> C;
 
         pub closed spec fn inv(self) -> bool {
-            true // gauge_eq(self.m@, self.ghostKvs@.kvs)
+            self.mu.get_pred() == gen_kv_lock_pred::<P,_,Pred>(self.constant()) 
         }
 
         // XXX: no need to predicate-wrap Phi here for the spinlock use-case.
         // requires [ ∀ σ, P σ ==∗ P (σ.insert(k,v)) ∗ Φ ]
         // ensures  Φ
-        #[verifier(external_body)]
         pub fn put_hocap<Phi, Au: AtomicUpdate<Map<u64,u64>, P, (), (P, Phi)>>
             (&self, k:u64, v:u64, Tracked(au):Tracked<Au>) -> (ret:Tracked<Phi>)
 
             requires
             self.inv(),
-            // XXX: can't do it this way
-            // forall |sigma, res| Pred::inv((res, sigma), old(self).constant()) ==> au@.requires((Tracked(res), Ghost(sigma))),
+            
+            // XXX: these are two separate foralls because if we put them
+            // together, the set of trigger probably becomes a multipattern
+            // because of `res_prime` not showing up in the first #[trigger].
+            forall |sigma, res|
+            (Pred::inv(self.constant(), (res, sigma)) ==> #[trigger] au.requires(sigma, res)),
+
             forall |sigma, res, res_prime|
-            (#[trigger] Pred::inv(self.constant(), (res, sigma)) ==> au.requires(sigma, res)) &&
             (#[trigger] au.ensures(sigma, res, (), res_prime) ==> Pred::inv(self.constant(), (res_prime.0, sigma.insert(k,v)))),
         {
-            unimplemented!();
+            let mut s = self.mu.lock();
+            let tracked (res, phi) = au.call_once(s.m@, s.res.get()).1.get();
+            s.m.insert(k, v);
+            return Tracked(phi);
         }
 
         // requires [ ∀ σ, P σ ==∗ P σ' ∗ Φ(lookup(σ,k)) ]
         // ensures  Φ
-        #[verifier(external_body)]
         pub fn get_and_put_hocap<PhiRes, // F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> Tracked<(P, PhiRes)>>
                                  Au: AtomicUpdate<Map<u64,u64>, P, (), (P, PhiRes)>>
             (&self, k:u64, v:u64, Tracked(au):Tracked<Au>,
@@ -63,8 +85,10 @@ verus! {
 
             requires
             self.inv(),
+            forall |sigma, res|
+            (Pred::inv(self.constant(), (res, sigma)) ==>  #[trigger] au.requires(sigma, res)),
+
             forall |sigma, res, au_ret|
-            (#[trigger] Pred::inv(self.constant(), (res, sigma)) ==> au.requires(sigma, res)) &&
             (#[trigger] au.ensures(sigma, res, (), au_ret) ==>
                  Pred::inv(self.constant(), (au_ret.0, sigma.insert(k,v))) &&
                  phiPred@(lookup(sigma, k), au_ret.1)
@@ -73,12 +97,19 @@ verus! {
 
             ensures phiPred@(ret.0, ret.1@)
         {
-            unimplemented!();
+            let mut s = self.mu.lock();
+            let oldval = match s.m.get(k) {
+                None => 0,
+                Some(x) => *x 
+            };
+            let tracked (res, phi) = au.call_once(s.m@, s.res.get()).1.get();
+            s.m.insert(k, v);
+            return (oldval, Tracked(phi));
         }
 
         // requires (P ∅)
         #[verifier(external_body)]
-        pub fn new(res:P, c:C) -> (kv:KvClient<P,C,Pred>)
+        pub fn new(res:P, c:C) -> (kv:KvMap<P,C,Pred>)
             requires Pred::inv(c, (res, Map::<u64,u64>::empty())),
 
             ensures kv.constant() == c,
@@ -160,16 +191,17 @@ verus! {
         }
     }
 
-    fn spinlock_acquire<R>(kv:&KvClient<LockInvRes<R>, LockInvConsts, LockInvPredicate>)
+    fn spinlock_acquire<R>(kv:&KvMap<LockInvRes<R>, LockInvConsts, LockInvPredicate>)
         -> Tracked<R>
+        requires kv.inv()
     {
-       loop {
+       loop
+            invariant
+            kv.inv()
+        {
            let ghost c = kv.constant();
 
-           let tracked au : AcquireAu;
-           proof {
-               au = AcquireAu{c: kv.constant()};
-           }
+           let tracked au = AcquireAu{c: kv.constant()};
            let ret = kv.get_and_put_hocap::<_, AcquireAu>(37, 1, Tracked(au), Ghost(phi_pred()));
 
            if ret.0 == 0 {
@@ -211,7 +243,8 @@ verus! {
         }
     }
 
-    fn spinlock_release<R>(kv:&KvClient<LockInvRes<R>, LockInvConsts, LockInvPredicate>, r:Tracked<R>)
+    fn spinlock_release<R>(kv:&KvMap<LockInvRes<R>, LockInvConsts, LockInvPredicate>, r:Tracked<R>)
+        requires kv.inv()
     {
         let ghost c = kv.constant();
         let tracked au = ReleaseAu{c:kv.constant(), r:r.get()};
