@@ -50,11 +50,13 @@ verus! {
         state:u64, // see above for possible values
     }
 
+    type RequestResources<P> = Box<dyn AtomicUpdate<u64, P, (), P>>;
+
     // sort-of a "flat combining" register, but with no lock-free accesses and a
     // publication list of length 1.
     #[verifier::reject_recursive_types(P)]
     pub struct Register<C, P, Pred> {
-        plist: lock::Lock<WriteRequest>,
+        plist: lock::Lock<(WriteRequest, Tracked<Option<RequestResources<P>>>)>,
         val: lock::Lock<(u64, Tracked<P>)>,
         _1:std::marker::PhantomData<Pred>,
         _2:std::marker::PhantomData<C>,
@@ -89,13 +91,13 @@ verus! {
             loop
                 invariant self.inv()
             {
-                let req = self.plist.lock();
+                let (req, Tracked(res)) = self.plist.lock();
                 if req.state == ACTIVE {
                     let (oldval, Tracked(p)) = self.val.lock();
                     // FIXME: fire fupd
                     self.val.unlock((req.val, Tracked(p)));
                 }
-                self.plist.unlock(req);
+                self.plist.unlock((req, Tracked(None)));
             }
         }
 
@@ -128,20 +130,24 @@ verus! {
         fn async_write(&self, v:u64)
             requires self.inv()
         {
-            let mut req;
+            let mut req:WriteRequest;
+            let tracked res;
             // wait for publication list to have a unused slot
             loop {
-                req = self.plist.lock();
+                let inner = self.plist.lock();
+                req = inner.0;
+                res = inner.1.get();
+
                 if req.state == UNUSED {
                     break
                 }
-                self.plist.unlock(req);
+                self.plist.unlock((req, Tracked(res)));
             }
 
             // send request
             req.state = ACTIVE;
             req.val = v;
-            self.plist.unlock(req);
+            self.plist.unlock((req, Tracked(res)));
 
             // XXX: this doesn't wait for a response. If it did wait, the spec
             // ought to return some user-chosen Φ that shows up on the RHS of

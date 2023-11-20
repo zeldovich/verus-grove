@@ -63,6 +63,10 @@ error: The verifier does not yet support the following Rust feature: using funct
 Trait functions supposedly get better diagnostics (because more stuff statically
 resolves) than FnSpec. What's an example of the difference?
 
+# Sized restrictions
+Shouldn't need to worry about the size of tracked or ghost state.
+Can get around this at least for `dyn T` via `Box<dyn T>`.
+
 --------------------------------------------------------------------------------
 
 
