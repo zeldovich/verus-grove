@@ -22,16 +22,31 @@ verus! {
         val: lock::Lock<u64>,
     }
 
+    spec fn gen_val_pred() -> FnSpec(u64) -> bool {
+        |val:u64| {
+            true
+        }
+    }
+
+    spec fn gen_plist_pred() -> FnSpec(WriteRequest) -> bool {
+        |req:WriteRequest| {
+            true
+        }
+    }
+
     impl Register {
         spec fn inv(self) -> bool {
-            true
+            self.val.get_pred() == gen_val_pred() &&
+            self.plist.get_pred() == gen_plist_pred()
         }
 
         fn combiner(&self)
             requires self.inv()
         {
             // repeatedly
-            loop {
+            loop
+                invariant self.inv()
+            {
                 let req = self.plist.lock();
                 if req.state == ACTIVE {
                     let _ = self.val.lock();
