@@ -26,13 +26,6 @@ verus! {
     }
 
     #[verifier(external_body)]
-    proof fn token_exlcusive(tracked a:&GhostToken, tracked b:&GhostToken)
-        requires a.gname() == b.gname()
-        ensures false
-    {
-    }
-
-    #[verifier(external_body)]
     proof fn token_freeze(tracked a:GhostToken) -> (tracked b:GhostWitness)
         ensures a.gname() == b.gname()
     {

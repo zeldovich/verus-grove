@@ -1,0 +1,110 @@
+# Splitting of resources and mathematical predicate.
+An example of this is the phiPred and PhiRes thing in get_and_put_hocap.
+
+# Opening and closing invariants more flexibly
+Unclear how to encode TaDa style logical atomicity at the moment.
+Able to write and use a hocap-style spec for spinlock using a single FnOnce.
+This works because the caller of the hocap spec doesn't need to open any
+invariants in the spinlock.
+Problem: if not careful, could end up enabling higher-order ghost state/"later
+without invariant" paradox.
+Solution: later credits. *Always* demand a later credit for opening an invariant.
+
+# Higher order proof fns.
+Q: is a Tracked<FnOnce(X) -> Y> essentially a `proof fn`?
+A: No. It's actually a FnOnce that'll be impossible to use: in order to use it,
+once must call `f.get()` or some such to unwrap the `Tracked<_>`. This
+requires being in proof mode. But, one can't call a `FnOnce` from proof mode,
+since it might contain executable code.
+
+One possible solution: deeply embed proof fns into verus.
+Have an explicit AST type for proof fns.
+The way to call a proof fn is to use a special `proof fn` called `interpret_proof_fn()`.
+
+proof fn invoke_proof_fn(f:ProofFn)
+  requires isVerified(f)
+  requires f.requires()
+  ensures  f.ensures()
+{
+}
+
+isVerified(f) == proof obligation for f as a proof fn, e.g. some loop over the
+list of FnSpecs for the asserts.
+
+E.g. a sequence of asserts() can turn into a list of FnSpecs, for which a proof
+obligation can be generically generated.
+
+# Higher-order proof fns using traits
+A limitation:
+ can't define `Or<OneShotPending, AtomicUpdate>` because `AtomicUpdate` is a
+ trait, not a type. Would need to have `Or` take a type parameter, which we may
+ not want to keep *fixed*. An example of where we don't want to "decide the
+ type" of the `AtomicUpdate` trait once and for all is helping, where we might
+ build up a fupd "thunk" over time.
+
+# Helping
+To do helping, would perhaps want to be able to put fupds inside of invariants.
+That's a key ingredient in impredicative invariant paradoxes.
+E.g. aof-style batching/combining.
+erpc is probably doable without dealing with this subtley because at the time
+the invariant is allocated, we already know the fupd that we want to run and can
+parameterize the invariant by that `AtomicUpdate` trait-bounded type.
+Maybe returningg `impl trait` or `dyn trait` would work?
+
+#
+```
+error: The verifier does not yet support the following Rust feature: using functions as values
+   --> ../../verus-grove/logical_atomicity.rs:166:46
+    |
+166 |            let ret = kv.cput_hocap(37, 0, 1, trylock_cput_au, phi_pred());
+```
+
+# FnSpec vs trait with spec fn
+Trait functions supposedly get better diagnostics (because more stuff statically
+resolves) than FnSpec. What's an example of the difference?
+
+--------------------------------------------------------------------------------
+
+
+⟦⋅⟧ : iProp → rust type
+⟨⋅⟩ : (A:iProp) → (rust fn ⟦A⟧ → bool)
+
+⟦A ∗ B⟧ ≜ (⟦A⟧, ⟦B⟧)
+⟨A ∗ B⟩ ≜  fn ((a,b):⟦A∗B⟧) { ⟨A⟩(a) && ⟨B⟩(b) }
+
+⟦A ∨ B⟧ ≜ Or<⟦A⟧, ⟦B⟧>
+⟨A ∨ B⟩ ≜ fn (c:⟦A ∨ B⟧) {
+  match c {
+    Or::left(a) ==> ⟨A⟩(a)
+    Or::left(b) ==> ⟨B⟩(b)
+  }
+}
+
+⟦own γ (a:A)⟧ ≜ own<⟦A⟧>
+⟨own γ (a:A)⟩ ≜ fn (o:⟦own γ (a:A)⟧) {
+  o.gname() == γ
+  o.val() == a
+}
+
+In order for
+ (v:V) ⊢ P : iProp Σ
+
+⟦∃ v, P(v)⟧ ≜ (v:Ghost<V>, ⟦P⟧)
+⟦λ v, P⟧ ≜ ⟦P⟧
+
+⟦ap(f, arg1, arg2, ...)⟧ ≜ Or<⟦A⟧, ⟦B⟧>
+
+
+⟦Φ: X → iProp⟧ ≜
+  type PhiSchema = (...)
+  spec fn PhiPredicate(x:X, res:PhiSchema) -> bool
+  ...
+
+
+Goal: given Γ:(var_name → ty) and P:expr such that
+  Γ ⊢ P : iProp
+want
+  ⟦Γ⟧ : RustContext
+  ⟦P⟧ : RustType
+  ⟨P⟩ : RustExpr
+  (⟦Γ⟧ ⊧ ⟨P⟩ : (RustFn ⟦P⟧ bool))
