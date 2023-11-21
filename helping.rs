@@ -57,8 +57,8 @@ verus! {
         proof fn box_from<T:AtomicUpdate<Ag,At,Rg,Rt>>(t:T) -> (tracked ret:Box<Self>)
             // XXX: how does this fit into a model for `dyn T`?
             ensures
-                (forall |ag, at| ret.requires(ag,at) == #[trigger] t.requires(ag,at)),
-                (forall |ag, at, rg, rt| ret.ensures(ag,at,rg,rt) == #[trigger] t.ensures(ag,at,rg,rt))
+                (forall |ag, at| #[trigger] ret.requires(ag,at) == t.requires(ag,at)),
+                (forall |ag, at, rg, rt| #[trigger] ret.ensures(ag,at,rg,rt) == t.ensures(ag,at,rg,rt))
         {
             unimplemented!();
         }
@@ -80,9 +80,6 @@ verus! {
     const UNUSED: u64 = 0;
     const ACTIVE: u64 = 1;
 
-    // match state {
-    //  
-    // }
     struct WriteRequest {
         val:u64,
         state:u64, // see above for possible values
@@ -114,6 +111,7 @@ verus! {
     // abstraction of a "valid fupd"?
     spec fn gen_plist_pred<C,P,Pred:InvariantPredicate<C, (u64, P)>>(c:C) ->
         FnSpec((WriteRequest, Tracked<Option<RequestResources<P>>>)) -> bool {
+            // XXX: why so is much type annotation needed?
         |args: (WriteRequest, Tracked<Option<RequestResources<P>>>)| {
             ((args.1@ == None::<RequestResources<P>>) ==> args.0.state == UNUSED) &&
             forall |au:RequestResources<P>| args.1@ == Some(au) ==>
@@ -214,24 +212,7 @@ verus! {
             // send request
             req.state = ACTIVE;
             req.val = v;
-            let tracked res = _Dyn_AtomicUpdate::box_from(au);
-            let new_entry = (req, Tracked(Some(res)));
-            assert (forall |some_res:RequestResources<P>| new_entry.1@ == Some(some_res) ==>
-                    some_res == res);
-
-
-            assert(forall |oldv:u64, p:P| au.requires(oldv, p) ==> #[trigger] res.requires(oldv, p));
-            assert(forall |oldv:u64, p:P| Pred::inv(self.constant(), (oldv, p)) ==>
-                   #[trigger] res.requires(oldv, p)
-            );
-
-            assert(forall |oldv:u64, p:P, p_prime:P| #[trigger] res.ensures(oldv, p, (), p_prime) ==>
-                   au.ensures(oldv, p, (), p_prime));
-            assert(forall |oldv:u64, p:P, p_prime:P| #[trigger] res.ensures(oldv, p, (), p_prime) ==> Pred::inv(self.constant(), (new_entry.0.val, p_prime)));
-                   
-
-            assert( gen_plist_pred::<C,P,Pred>(self.constant())(new_entry) );
-            self.plist.unlock(new_entry);
+            self.plist.unlock((req, Tracked(Some(_Dyn_AtomicUpdate::box_from(au)))));
 
             // XXX: this doesn't wait for a response. If it did wait, the spec
             // ought to return some user-chosen Φ that shows up on the RHS of
