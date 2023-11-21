@@ -132,7 +132,7 @@ verus! {
         {
             let mut req:WriteRequest;
             let tracked res;
-            // wait for publication list to have a unused slot
+            // wait for publication list to have an unused slot
             loop {
                 let inner = self.plist.lock();
                 req = inner.0;
