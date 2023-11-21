@@ -38,6 +38,44 @@ verus! {
             // opens_invariants any
     }
 
+    // XXX: this is manually written model for `dyn AtomicUpdate...`
+    #[verifier(external_body)]
+    #[verifier::reject_recursive_types(Ag)]
+    #[verifier::reject_recursive_types(At)]
+    #[verifier::reject_recursive_types(Rg)]
+    #[verifier::reject_recursive_types(Rt)]
+    #[allow(non_camel_case_types)]
+    struct _Dyn_AtomicUpdate<Ag, At, Rg, Rt> {
+        _unused1: std::marker::PhantomData<Ag>,
+        _unused2: std::marker::PhantomData<At>,
+        _unused3: std::marker::PhantomData<Rg>,
+        _unused4: std::marker::PhantomData<Rt>,
+    }
+
+    impl<Ag,At,Rg,Rt> _Dyn_AtomicUpdate<Ag,At,Rg,Rt> {
+        #[verifier(external_body)]
+        proof fn box_from<T:AtomicUpdate<Ag,At,Rg,Rt>>(t:T) -> (tracked ret:Box<Self>)
+            // XXX: how does this fit into a model for `dyn T`?
+            ensures
+                (forall |ag, at| ret.requires(ag,at) == #[trigger] t.requires(ag,at)),
+                (forall |ag, at, rg, rt| ret.ensures(ag,at,rg,rt) == #[trigger] t.ensures(ag,at,rg,rt))
+        {
+            unimplemented!();
+        }
+    }
+
+    impl<Ag,At,Rg,Rt> AtomicUpdate<Ag,At,Rg,Rt> for _Dyn_AtomicUpdate<Ag,At,Rg,Rt> {
+        spec fn requires(&self, ag:Ag, at:At) -> bool;
+        spec fn ensures(&self, ag:Ag, at:At, rg:Rg, rt:Rt) -> bool;
+        #[verifier(external_body)]
+        proof fn call_once(tracked self, ag:Ag, tracked at:At) -> (tracked r:(Ghost<Rg>, Tracked<Rt>)) where Self: std::marker::Sized
+        {
+            unimplemented!();
+        }
+    }
+
+    // XXX: end of model for `dyn AtomicUpdate`
+
     // possible `state`s
     const UNUSED: u64 = 0;
     const ACTIVE: u64 = 1;
@@ -50,7 +88,8 @@ verus! {
         state:u64, // see above for possible values
     }
 
-    type RequestResources<P> = Box<dyn AtomicUpdate<u64, P, (), P>>;
+    // type RequestResources<P> = Box<dyn AtomicUpdate<u64, P, (), P>>;
+    type RequestResources<P> = Box<_Dyn_AtomicUpdate<u64, P, (), P>>;
 
     // sort-of a "flat combining" register, but with no lock-free accesses and a
     // publication list of length 1.
@@ -70,9 +109,18 @@ verus! {
         }
     }
 
-    spec fn gen_plist_pred() -> FnSpec(WriteRequest) -> bool {
-        |req:WriteRequest| {
-            true
+    // FIXME: want to write this as a match statement with forall's inside of
+    // it, but then we can't set triggers as we want. Maybe introduce an
+    // abstraction of a "valid fupd"?
+    spec fn gen_plist_pred<C,P,Pred:InvariantPredicate<C, (u64, P)>>(c:C) ->
+        FnSpec((WriteRequest, Tracked<Option<RequestResources<P>>>)) -> bool {
+        |args: (WriteRequest, Tracked<Option<RequestResources<P>>>)| {
+            ((args.1@ == None::<RequestResources<P>>) ==> args.0.state == UNUSED) &&
+            forall |au:RequestResources<P>| args.1@ == Some(au) ==>
+                ((forall |oldv:u64, p:P| Pred::inv(c, (oldv, p)) ==> #[trigger] au.requires(oldv, p)) &&
+                 (forall |oldv:u64, p:P, p_prime:P| #[trigger] au.ensures(oldv, p, (), p_prime) ==>
+                  Pred::inv(c, (args.0.val, p_prime)))
+                 )
         }
     }
 
@@ -81,7 +129,7 @@ verus! {
 
         spec fn inv(self) -> bool {
             self.val.get_pred() == gen_val_pred::<C,P,Pred>(self.constant()) &&
-            self.plist.get_pred() == gen_plist_pred()
+            self.plist.get_pred() == gen_plist_pred::<C,P,Pred>(self.constant())
         }
 
         // background thread that executes operations requested by other threads.
@@ -91,12 +139,26 @@ verus! {
             loop
                 invariant self.inv()
             {
-                let (req, Tracked(res)) = self.plist.lock();
+                let (mut req, Tracked(res)) = self.plist.lock();
                 if req.state == ACTIVE {
                     let (oldval, Tracked(p)) = self.val.lock();
-                    // FIXME: fire fupd
+                    // fire fupd
+                    proof {
+                        match res {
+                            None => {
+                                assert(false);
+                            }
+                            Some(au) => {
+                                // really fire the fupd
+                                assert(Pred::inv(self.constant(), (oldval, p)));
+                                assert(au.requires(oldval, p));
+                                p = (*au).call_once(oldval, p).1.get();
+                            }
+                        }
+                    }
                     self.val.unlock((req.val, Tracked(p)));
                 }
+                req.state = UNUSED;
                 self.plist.unlock((req, Tracked(None)));
             }
         }
@@ -127,16 +189,21 @@ verus! {
 
         // requires (∀ oldv, P oldv ={∅}=∗ P v)
         // ensures True
-        fn async_write(&self, v:u64)
-            requires self.inv()
+        fn async_write
+            <Au:AtomicUpdate<u64, P, (), P>>
+            (&self, v:u64, Tracked(au):Tracked<Au>)
+            requires self.inv(),
+            (forall |oldv:u64, p:P| Pred::inv(self.constant(), (oldv, p)) ==> #[trigger] au.requires(oldv, p)),
+            (forall |oldv:u64, p:P, p_prime:P| #[trigger] au.ensures(oldv, p, (), p_prime) ==>
+             Pred::inv(self.constant(), (v, p_prime))),
         {
             let mut req:WriteRequest;
-            let tracked res;
+            let tracked mut res;
             // wait for publication list to have an unused slot
             loop {
                 let inner = self.plist.lock();
                 req = inner.0;
-                res = inner.1.get();
+                proof { res = inner.1.get(); }
 
                 if req.state == UNUSED {
                     break
@@ -147,7 +214,24 @@ verus! {
             // send request
             req.state = ACTIVE;
             req.val = v;
-            self.plist.unlock((req, Tracked(res)));
+            let tracked res = _Dyn_AtomicUpdate::box_from(au);
+            let new_entry = (req, Tracked(Some(res)));
+            assert (forall |some_res:RequestResources<P>| new_entry.1@ == Some(some_res) ==>
+                    some_res == res);
+
+
+            assert(forall |oldv:u64, p:P| au.requires(oldv, p) ==> #[trigger] res.requires(oldv, p));
+            assert(forall |oldv:u64, p:P| Pred::inv(self.constant(), (oldv, p)) ==>
+                   #[trigger] res.requires(oldv, p)
+            );
+
+            assert(forall |oldv:u64, p:P, p_prime:P| #[trigger] res.ensures(oldv, p, (), p_prime) ==>
+                   au.ensures(oldv, p, (), p_prime));
+            assert(forall |oldv:u64, p:P, p_prime:P| #[trigger] res.ensures(oldv, p, (), p_prime) ==> Pred::inv(self.constant(), (new_entry.0.val, p_prime)));
+                   
+
+            assert( gen_plist_pred::<C,P,Pred>(self.constant())(new_entry) );
+            self.plist.unlock(new_entry);
 
             // XXX: this doesn't wait for a response. If it did wait, the spec
             // ought to return some user-chosen Φ that shows up on the RHS of
