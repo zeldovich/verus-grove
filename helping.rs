@@ -4,31 +4,6 @@ mod kv;
 use kv::*;
 
 verus! {
-    #[verifier(external_body)]
-    #[verifier::reject_recursive_types(T)]
-    pub struct SavedProp<T> {
-        _unused:std::marker::PhantomData<T>,
-    }
-
-    impl<P> SavedProp<P> {
-        spec fn gname() -> nat;
-
-        #[verifier(external_body)]
-        proof fn update<Q>(self) -> SavedProp<Q>
-        {
-            unimplemented!();
-        }
-
-        #[verifier(external_body)]
-        proof fn agree<Q>(&self, other:&SavedProp<Q>) -> bool
-            // XXX: want to return (Q ∗={∅}=∗ P), which requires trait objects.
-            // FIXME: need (£ 1) as input, or return a higher-order function
-            // □(£ 1 -∗ (Q ∗={∅}=∗ P))
-        {
-            unimplemented!();
-        }
-    }
-
     pub trait AtomicUpdate<Ag, At, Rg, Rt> {
         spec fn requires(&self, ag:Ag, at:At) -> bool;
         spec fn ensures(&self, ag:Ag, at:At, rg:Rg, rt:Rt) -> bool;
