@@ -1,5 +1,4 @@
 use vstd::{prelude::*,invariant::*,thread::*};
-use std::ops::Deref;
 
 verus! {
     trait Shape {
@@ -20,14 +19,19 @@ verus! {
     // Type` with an axiom that `tr_bound%mymod!TraitName (Dyn tr_bound%mymod!TraitName) == true`.
     // for any trait `tr_bound%mymod!TraitName: (Dcr Type) -> Bool`.
     #[verifier(external_body)]
-    struct _Dyn_Shape;
+    #[allow(non_camel_case_types)]
+    struct _Dyn_Shape
+    {
+        x:Box<dyn Shape>
+    }
 
     impl _Dyn_Shape {
         #[verifier(external_body)]
-        fn box_from<T:Shape>(t:T) -> Box<Self>
+        fn box_from<T:Shape + 'static>(t:T) -> Box<Self>
         {
-            unimplemented!();
-            //return Box::new(_Dyn_Shape{x:t});
+            return Box::new(_Dyn_Shape{
+                x: Box::new(t)
+            });
         }
     }
 
@@ -36,10 +40,14 @@ verus! {
         spec fn area_spec(&self) -> u64;
 
         #[verifier(external_body)]
-        fn area(&self) -> (ret:u64) { unimplemented!() }
+        fn area(&self) -> (ret:u64) {
+            self.x.area()
+        }
 
         #[verifier(external_body)]
-        fn zero(&mut self);
+        fn zero(&mut self) {
+            self.x.zero()
+        }
     }
 
     pub struct Triangle {
@@ -78,7 +86,7 @@ verus! {
         }
     }
 
-    fn foo_lowered<T:Shape>(t:T)
+    fn foo_lowered<T:Shape + 'static>(t:T)
     {
         let x: Box<_Dyn_Shape>;
         x = _Dyn_Shape::box_from(t);

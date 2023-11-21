@@ -50,11 +50,47 @@ verus! {
         unimplemented!();
     }
 
-    // maybe use `impl PersAtomicUpdate`?
+    // □(At ={∅}=∗ Rt)
     pub trait PersistentAtomicUpdate<Ag, At, Rg, Rt> {
-        proof fn call(tracked self:Box<Self>, ag:Ag, at:At) -> (r:(Ghost<Rg>, Tracked<Rt>));
+        proof fn call(tracked &self, ag:Ag, at:At) -> (r:(Ghost<Rg>, Tracked<Rt>));
             // opens_invariants any;
     }
+
+    // XXX: this is manually written model for `dyn AtomicUpdate...`
+    #[verifier(external_body)]
+    #[verifier::reject_recursive_types(Ag)]
+    #[verifier::reject_recursive_types(At)]
+    #[verifier::reject_recursive_types(Rg)]
+    #[verifier::reject_recursive_types(Rt)]
+    #[allow(non_camel_case_types)]
+    struct _Dyn_PersistentAtomicUpdate<Ag, At, Rg, Rt> {
+        _unused1: std::marker::PhantomData<Ag>,
+        _unused2: std::marker::PhantomData<At>,
+        _unused3: std::marker::PhantomData<Rg>,
+        _unused4: std::marker::PhantomData<Rt>,
+    }
+
+    impl<Ag,At,Rg,Rt> _Dyn_PersistentAtomicUpdate<Ag,At,Rg,Rt> {
+        #[verifier(external_body)]
+        proof fn box_from<T:PersistentAtomicUpdate<Ag,At,Rg,Rt>>(t:T) -> (tracked ret:Box<Self>)
+            // XXX: how does this fit into a model for `dyn T`?
+            ensures
+                (forall |ag, at| #[trigger] ret.requires(ag,at) == t.requires(ag,at)),
+                (forall |ag, at, rg, rt| #[trigger] ret.ensures(ag,at,rg,rt) == t.ensures(ag,at,rg,rt))
+        {
+            unimplemented!();
+        }
+    }
+
+    impl<Ag,At,Rg,Rt> PersistentAtomicUpdate<Ag,At,Rg,Rt> for _Dyn_PersistentAtomicUpdate<Ag,At,Rg,Rt> {
+        #[verifier(external_body)]
+        proof fn call_once(tracked self, ag:Ag, tracked at:At) -> (tracked r:(Ghost<Rg>, Tracked<Rt>)) where Self: std::marker::Sized
+        {
+            unimplemented!();
+        }
+    }
+
+    // XXX: end of model for `dyn AtomicUpdate`
 
     enum Or<A,B> {
         Left(A),
