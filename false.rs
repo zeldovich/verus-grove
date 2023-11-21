@@ -1,5 +1,6 @@
 #![feature(never_type)]
 use vstd::{prelude::*, invariant::*};
+use std::sync::Arc;
 
 verus! {
     #[verifier(external_body)]
@@ -52,7 +53,7 @@ verus! {
 
     // □(At ={∅}=∗ Rt)
     pub trait PersistentAtomicUpdate<Ag, At, Rg, Rt> {
-        proof fn call(tracked &self, ag:Ag, at:At) -> (r:(Ghost<Rg>, Tracked<Rt>));
+        proof fn call(tracked &self, ag:Ag, tracked at:At) -> (tracked r:(Ghost<Rg>, Tracked<Rt>));
             // opens_invariants any;
     }
 
@@ -73,10 +74,6 @@ verus! {
     impl<Ag,At,Rg,Rt> _Dyn_PersistentAtomicUpdate<Ag,At,Rg,Rt> {
         #[verifier(external_body)]
         proof fn box_from<T:PersistentAtomicUpdate<Ag,At,Rg,Rt>>(t:T) -> (tracked ret:Box<Self>)
-            // XXX: how does this fit into a model for `dyn T`?
-            ensures
-                (forall |ag, at| #[trigger] ret.requires(ag,at) == t.requires(ag,at)),
-                (forall |ag, at, rg, rt| #[trigger] ret.ensures(ag,at,rg,rt) == t.ensures(ag,at,rg,rt))
         {
             unimplemented!();
         }
@@ -84,7 +81,7 @@ verus! {
 
     impl<Ag,At,Rg,Rt> PersistentAtomicUpdate<Ag,At,Rg,Rt> for _Dyn_PersistentAtomicUpdate<Ag,At,Rg,Rt> {
         #[verifier(external_body)]
-        proof fn call_once(tracked self, ag:Ag, tracked at:At) -> (tracked r:(Ghost<Rg>, Tracked<Rt>)) where Self: std::marker::Sized
+        proof fn call(tracked &self, ag:Ag, tracked at:At) -> (tracked r:(Ghost<Rg>, Tracked<Rt>)) where Self: std::marker::Sized
         {
             unimplemented!();
         }
@@ -97,10 +94,22 @@ verus! {
         Right(B),
     }
 
-    // type B<F:PersistentAtomicUpdate> = F;
+    // XXX: verus doesn't seem to support ! type. Can introduce mathematical
+    // predicates to fupds if to get rid of this `external_body`.
+    #[verifier(external_body)]
+    pub struct False {
+        pub x:!
+    }
+
+    #[verifier(external_body)]
+    proof fn false_to_anything<A>() -> (tracked r:A)
+        requires false
+    {
+        unimplemented!();
+    }
 
     // Definition B : PROP := □ fupd M1 False.
-    type B = Box<dyn PersistentAtomicUpdate<(), (), (), !>>;
+    type B = Arc<Box<_Dyn_PersistentAtomicUpdate<(), (), (), False>>>;
 
     // Definition P (γ : gname) : PROP := start γ ∨ B.
     // Definition I (i : name) (γ : gname) : PROP := inv i (start γ ∨ B).
@@ -112,13 +121,73 @@ verus! {
         }
     }
 
-    type Inv  = AtomicInvariant<(), Or<GhostToken, B>, TruePredicate>;
+    // TODO: put gname as one of the consts and write predicate about it
+    type Inv = AtomicInvariant<(), Or<GhostToken, B>, TruePredicate>;
 
-    proof fn prove_false() {
-        let tok = token_new();
-        // FIXME: error: The verifier does not yet support the following Rust feature: dynamic types
+    // TODO: wrap this in a LocalInvariant to maintain gname property
+    tracked struct BFupd {
+        tracked wit: GhostWitness,
+        tracked i:&'static Inv,
+    }
 
-        let a:Inv = AtomicInvariant::new((), Or::Left(tok), 37);
+    impl PersistentAtomicUpdate<(), (), (), False> for BFupd {
+        proof fn call(tracked &self, ag:(), tracked at:()) ->
+            (tracked r:(Ghost<()>, Tracked<False>))
+            // FIXME: want to be able to open invariant here
+        {
+            let tracked mut b:Arc<Box<_Dyn_PersistentAtomicUpdate<(),(),(),False>>>;
+
+            open_atomic_invariant!(&self.i => r =>{
+                match r {
+                    Or::Left(tok) => {
+                        assume(tok.gname() == self.wit.gname());
+                        token_witness_false(&tok, &self.wit);
+                        r = Or::Left(tok);
+                        b = false_to_anything();
+                    }
+                    Or::Right(b_in) => {
+                        b = b_in.clone();
+                        r = Or::Right(b_in);
+                    }
+                }
+            });
+
+            let tracked r:(Ghost<()>, Tracked<False>) = (**b).call((), ());
+
+            return (Ghost(()), r.1);
+            // return (Ghost(()), Tracked(b.call((), ())));
+        }
+    }
+
+    proof fn prove_false() -> (tracked r:False)
+        opens_invariants any
+    {
+        let tracked tok = token_new();
+        let tracked i:Inv = AtomicInvariant::new((), Or::Left(tok), 37);
+        // TODO: turn this into a shared reference
+
+        let tracked mut b;
+        open_atomic_invariant!(&i => r =>{
+            match r {
+                Or::Left(tok) => {
+                    let tracked witness = token_freeze(tok);
+
+                    let bf = BFupd{
+                        wit: witness,
+                        i: &i,
+                    };
+                    b = Arc::new(_Dyn_PersistentAtomicUpdate::box_from(bf));
+                    r = Or::Right(b.clone());
+                }
+                Or::Right(b_in) => {
+                    b = b_in.clone();
+                    r = Or::Right(b_in);
+                }
+            }
+        });
+
+        let tracked f = (**b).call((), ()).1;
+        return f.get();
     }
 
     fn main() {}
