@@ -136,8 +136,8 @@ verus! {
             }
         }
 
-        // requires (∀ v, P v ={∅}=∗ P v ∗ Φ)
-        // ensures Φ
+        // requires (∀ v, P v ={∅}=∗ P v ∗ Φ v)
+        // ensures Φ ret
         fn read
             <Phi, Au:AtomicUpdate<u64, P, (), (P, Phi)>>
             (&self, Tracked(au):Tracked<Au>,
