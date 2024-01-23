@@ -53,6 +53,24 @@ verus! {
 
         // XXX: no need to predicate-wrap Phi here for the spinlock use-case.
         // requires [ ∀ σ, P σ ==∗ P (σ.insert(k,v)) ∗ Φ ]
+        //
+        // P σ
+        // P σ := (ghost_var γ σ)
+        //
+        // struct P {
+        //  x:GhostVarOwn
+        // }
+        //
+        // res:P
+        // Pred : FnSpec(res:P, σ:state) -> bool
+        // 
+        // (res.x.state == σ)
+        //
+        // ghost_var σ
+        // 
+        // 
+        // (x:P) ∗ (pred H σ)
+        // 
         // ensures  Φ
         pub fn put_hocap<Phi, Au: AtomicUpdate<Map<u64,u64>, P, (), (P, Phi)>>
             (&self, k:u64, v:u64, Tracked(au):Tracked<Au>) -> (ret:Tracked<Phi>)
@@ -63,7 +81,7 @@ verus! {
             // XXX: these are two separate foralls because if we put them
             // together, the set of trigger probably becomes a multipattern
             // because of `res_prime` not showing up in the first #[trigger].
-            forall |sigma, res|
+            forall |sigma, res:P|
             (Pred::inv(self.constant(), (res, sigma)) ==> #[trigger] au.requires(sigma, res)),
 
             forall |sigma, res, res_prime|
@@ -78,7 +96,7 @@ verus! {
         }
 
         // requires [ ∀ σ, P σ ==∗ P σ' ∗ Φ(lookup(σ,k)) ]
-        // ensures  Φ
+        // ensures  (Φ ret)
         pub fn get_and_put_hocap<PhiRes, // F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> Tracked<(P, PhiRes)>>
                                  Au: AtomicUpdate<Map<u64,u64>, P, (), (P, PhiRes)>>
             (&self, k:u64, v:u64, Tracked(au):Tracked<Au>,
@@ -126,6 +144,10 @@ verus! {
         Right(B),
     }
 
+    // σ:Map<u64,u64>
+    //
+    // if σ[37] == 0 then R else True
+    //
     type LockInvRes<R> = Or<R,()>;
     struct LockInvConsts {}
     struct LockInvPredicate{}

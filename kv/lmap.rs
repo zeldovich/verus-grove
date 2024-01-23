@@ -20,7 +20,6 @@ verus! {
         )
     }
 
-
     impl<A,B> View for LMap<A,B> {
         type V = Map<A,B>;
         closed spec fn view(&self) -> Map<A,B> {

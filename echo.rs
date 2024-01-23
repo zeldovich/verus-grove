@@ -15,11 +15,6 @@ verus! {
         pub sender: String,
     }
 
-    impl NetworkPointsTo {
-        pub spec fn host(self) -> String;
-        pub spec fn msgs(self) -> Set<Message>;
-    }
-
     // NOTE: ideally, we would give specs to the build std::net functions. There
     // are two problems:
     // (1) want to add ghost resources in pre/post conditions of these functions
@@ -65,8 +60,21 @@ verus! {
         }
     }
 
+    pub trait AtomicUpdate<Ag, At, Rg, Rt> {
+        spec fn requires(&self, ag:Ag, at:At) -> bool;
+        spec fn ensures(&self, ag:Ag, at:At, rg:Rg, rt:Rt) -> bool;
+        proof fn call_once(tracked self, ag:Ag, tracked at:At) -> (tracked r:(Ghost<Rg>, Tracked<Rt>)) where Self: std::marker::Sized
+            requires self.requires(ag, at)
+            ensures self.ensures(ag, at, r.0@, r.1@);
+            // opens_invariants any
+    }
+
+    trait iPred<X> {
+        spec fn get_parameter() -> X;
+    }
+
     // Hoare triples for network
-    impl Connection {
+    impl Connection<P: iPred<(String, Set<Message>)>> {
         pub spec fn local(self) -> String;
         pub spec fn remote(self) -> String;
 
@@ -76,21 +84,33 @@ verus! {
             Ok(Self{mu: std::sync::Mutex::new(stream)})
         }
 
-        // XXX: this is the non-logically atomic version
-        // (self.local() net↦ msg ={⊤}=∗ self.local net↦ msg ∗ (∀ m, m ∈ msg → Φ m))
+        // Iris: (P self.local msg) ={⊤}=∗ P self.local msg ∗ (∀ m, m ∈ msg → Φ m))
+        // ⤳[uncurry]
+        // Here: (∀ m msg, P self.local msg ∗ ⌜m ∈ msg⌝ ={⊤}=∗ P self.local msg ∗ Φ m)
         #[verifier(external_body)]
-        pub fn receive(&self, netptsto:Tracked<NetworkPointsTo>)
-                       -> (ret:(Vec<u8>, Tracked<NetworkPointsTo>))
-            requires netptsto@.host() == self.local()
+        pub fn receive<Phi, Au:AtomicUpdate<Message, NetworkPointsTo, (), (NetworkPointsTo, Phi)>>
+            (&self, au:Tracked<Au>)
+                       -> (ret:(Vec<u8>, Tracked<Phi>))
+            (
+                forall |msg:_, netptsto:_|
+                (netptsto@.msgs().contains(Message{
+                    data:data@,
+                    sender: self.remote(),
+                })) ==> #[trigger] au.requires(msg, netptsto)
+            ),
+            (
+                forall |ag:_, at:_, at2:_|
+                (#[trigger] au.ensures(ag, at, (), at2)) ==> (at2 == at)
+            ),
+
             ensures ({
-                let (data, netptsto2) = ret;
+                let (data, phi) = ret;
                 netptsto2@ == netptsto@ &&
                 netptsto@.msgs().contains(Message{
                     data:data@,
                     sender: self.remote(),
                 })
-            }
-            )
+            })
         {
             let mut sz_enc = [0u8; 8];
             let mut s = self.mu.lock().unwrap();
