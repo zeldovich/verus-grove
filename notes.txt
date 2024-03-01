@@ -67,6 +67,15 @@ resolves) than FnSpec. What's an example of the difference?
 Shouldn't need to worry about the size of tracked or ghost state.
 Can get around this at least for `dyn T` via `Box<dyn T>`.
 
+# Exception safety
+It may be annoying/problematic to ensure exception safety in the case that we
+want to temporarily invalidate (resourceful) invariants. If e.g. we have an &mut
+ptsto, we cannot e.g. delete the key from the ghost map then re-allocate it
+becaue exception safety requires that the ptsto be valid throughout the
+reference's lifetime. One general solution might be to wrap things with Option<>
+and start by `take`-ing the resource out together with mathematical pre/post
+conditions stating that the option is Some.
+
 --------------------------------------------------------------------------------
 
 

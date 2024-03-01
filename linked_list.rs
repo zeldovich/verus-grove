@@ -63,3 +63,5 @@ impl<V> List<V> {
         }
     }
 }
+
+pub fn main() {}

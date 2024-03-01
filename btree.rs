@@ -7,10 +7,6 @@ type ValueType = usize;
 const MAX_DEGREE : usize = 8;
 
 pub struct BpTreeNode {
-    x: [Option<Box<TreeNode>>; MAX_DEGREE]
-}
-
-pub struct BpTreeNode {
     keys: [KeyType; MAX_DEGREE-1],
     ptrs: [usize; MAX_DEGREE],
     ptstos: Tracked<[PointsTo<BpTreeNode>; MAX_DEGREE]>, // FIXME: option pointsto
@@ -46,6 +42,9 @@ impl BpTreeNode {
 // P root
 // 
 // Other approach:
+//
+// XXX: this escrow-based thing is what lifetimes (and e.g. the lifetime logic)
+// already handle.
 #[verifier(external_body)]
 pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>) {
     // FIXME: if we go with a big_sep of points-tos, then when we take one out,
@@ -107,7 +106,7 @@ pub fn put(&mut self, key:KeyType, value:ValueType) {
                       });
     }
 
-    let mut node = self.root;
+    let mut node: &mut  = self.root;
     loop {
         if node.borrow(Tracked::assume_new()).is_leaf {
             // insert KV into here
