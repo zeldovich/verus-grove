@@ -2,6 +2,9 @@
 use vstd::{prelude::*, ptr::*};
 
 verus! {
+
+// FIXME: for loop on a slice iter
+
 type KeyType = u64;
 type ValueType = usize;
 const MAX_DEGREE : usize = 8;
@@ -9,7 +12,7 @@ const MAX_DEGREE : usize = 8;
 pub struct BpTreeNode {
     keys: [KeyType; MAX_DEGREE-1],
     ptrs: [usize; MAX_DEGREE],
-    ptstos: Tracked<[PointsTo<BpTreeNode>; MAX_DEGREE]>, // FIXME: option pointsto
+    ptstos: [Tracked<PointsTo<BpTreeNode>>; MAX_DEGREE], // FIXME: option pointsto
     length: u8, // length of keys array
     is_leaf: bool,
 }
@@ -45,7 +48,14 @@ impl BpTreeNode {
 //
 // XXX: this escrow-based thing is what lifetimes (and e.g. the lifetime logic)
 // already handle.
-#[verifier(external_body)]
+
+
+
+pub fn ref_tracked_to_tracked_ref<T>(r:&Tracked<T>) -> Tracked<&T> {
+    return Tracked(r.borrow())
+}
+
+// XXX: difference between &Tracked<T> and Tracked<&T>?
 pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>) {
     // FIXME: if we go with a big_sep of points-tos, then when we take one out,
     // we'd be mutating the BpTreeNode's ptstos field, which might mean we have
@@ -57,8 +67,9 @@ pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) ->
         let x = node_ptr.borrow(ptsto);
         if x.is_leaf {
             // scan the leaf
-            for (i, k) in x.keys.iter().enumerate() {
-                if *k == key {
+            // for (i, k) in x.keys.iter().enumerate() {
+            for i in 0..(x.length as usize) {
+                if x.keys[i] == key {
                     return Some(x.ptrs[i]);
                 }
             }
@@ -66,14 +77,16 @@ pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) ->
         } else {
             // find the next node to search
             let mut next_child_index : usize = x.length as usize;
-            for (i,k) in x.keys.iter().enumerate() {
-                if key <= *k {
+            // for (i,k) in x.keys.iter().enumerate() {
+            for i in 0..(x.length as usize) {
+                if key <= x.keys[i] {
                     next_child_index = i;
                     break;
                 }
             }
             node_ptr = PPtr::from_usize(x.ptrs[next_child_index]);
-            ptsto = Tracked(&x.ptstos.borrow()[next_child_index as int]);
+
+            ptsto = ref_tracked_to_tracked_ref(&x.ptstos[next_child_index]);
             // FIXME: what's the lifetime on this reference? This probably will
             // fail the rust typechecker.
         }
@@ -96,23 +109,24 @@ pub fn put(&mut self, key:KeyType, value:ValueType) {
         let (split_key, new_right_sibling) = root.split();
         // allocate new left node
         let (old_root_ptr, old_root_ptsto, old_root_dealloc) = PPtr::<BpTreeNode>::empty();
-        // newRoot = 
-        self.root.put(Tracked::assume_new(),
-                      BpTreeNode{is_leaf: false,
+        let newRoot = BpTreeNode{is_leaf: false,
                                  keys: [split_key; MAX_DEGREE - 1],
                                  ptrs: [old_root_ptr.to_usize(), new_right_sibling, 0, 0, 0, 0, 0, 0],
                                  length: 1,
-                                 ptstos: Tracked::assume_new(),
-                      });
+                                 ptstos: std::array::from_fn(|_| Tracked::assume_new()),
+                      };
+        self.root.put(Tracked::assume_new(), newRoot);
     }
 
-    let mut node: &mut  = self.root;
+    /*
+    let mut node: &mut _ = self.root;
     loop {
         if node.borrow(Tracked::assume_new()).is_leaf {
             // insert KV into here
             unimplemented!();
         }
     }
+    */
 }
 }
 
