@@ -1,5 +1,5 @@
 // in-memory B+ tree
-use vstd::{prelude::*, ptr::*};
+use vstd::{prelude::*, ptr::*, option::*};
 
 verus! {
 
@@ -12,6 +12,7 @@ const MAX_DEGREE : usize = 8;
 pub struct BpTreeNode {
     keys: [KeyType; MAX_DEGREE-1],
     ptrs: [usize; MAX_DEGREE],
+    // FIXME: Would a a Tracked<Seq<PointsTo>> work/be better?
     ptstos: [Tracked<PointsTo<BpTreeNode>>; MAX_DEGREE], // FIXME: option pointsto
     length: u8, // length of keys array
     is_leaf: bool,
@@ -33,6 +34,13 @@ impl BpTreeNode {
     fn split(&mut self) -> (KeyType, usize) {
         unimplemented!();
     }
+
+    pub closed spec fn inv(self) -> bool {
+        // ptstos and ptrs are in sync
+        (forall |i:int| 0 <= i < self.length ==> self.ptstos[i]@@.pptr == self.ptrs[i])
+        && 
+        (0 <= self.length <= MAX_DEGREE-1)
+    }
 }
 
 // Challenge: non-recursive pointer-chasing
@@ -50,25 +58,35 @@ impl BpTreeNode {
 // already handle.
 
 
-
 pub fn ref_tracked_to_tracked_ref<T>(r:&Tracked<T>) -> Tracked<&T> {
     return Tracked(r.borrow())
 }
 
-// XXX: difference between &Tracked<T> and Tracked<&T>?
-pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>) {
-    // FIXME: if we go with a big_sep of points-tos, then when we take one out,
-    // we'd be mutating the BpTreeNode's ptstos field, which might mean we have
-    // to do some take+put/replace, despite this being read-only.
-
+pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>)
+    requires
+      ptsto@@.value.is_Some(),
+      ptsto@@.value.unwrap().inv(),
+      ptsto@@.pptr == node_ptr,
+      ptsto@@.value.is_Some(),
+{
     let mut node_ptr : PPtr<BpTreeNode> = PPtr::from_usize(node_ptr);
     let mut ptsto = ptsto;
-    loop {
+    loop
+        invariant_ensures
+          ptsto@@.pptr == node_ptr.id(),
+          ptsto@@.value.is_Some(),
+          ptsto@@.value.unwrap().inv(),
+    {
         let x = node_ptr.borrow(ptsto);
+        assert(x == ptsto@@.value.unwrap());
+        assert(x.inv());
         if x.is_leaf {
             // scan the leaf
             // for (i, k) in x.keys.iter().enumerate() {
-            for i in 0..(x.length as usize) {
+            for i in 0..(x.length as usize)
+                invariant x.inv(),
+            {
+                assert(x.inv());
                 if x.keys[i] == key {
                     return Some(x.ptrs[i]);
                 }
@@ -78,17 +96,24 @@ pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) ->
             // find the next node to search
             let mut next_child_index : usize = x.length as usize;
             // for (i,k) in x.keys.iter().enumerate() {
-            for i in 0..(x.length as usize) {
+            for i in 0..(x.length as usize)
+                invariant
+                  x.inv(),
+                  0 <= next_child_index <= x.length,
+            {
+                assert(x.inv());
                 if key <= x.keys[i] {
                     next_child_index = i;
+                    assert(x.inv());
+                    assert(0 <= next_child_index <= x.length);
                     break;
                 }
+                assert(x.inv());
+                assert(0 <= next_child_index <= x.length);
             }
             node_ptr = PPtr::from_usize(x.ptrs[next_child_index]);
 
             ptsto = ref_tracked_to_tracked_ref(&x.ptstos[next_child_index]);
-            // FIXME: what's the lifetime on this reference? This probably will
-            // fail the rust typechecker.
         }
     }
 }
