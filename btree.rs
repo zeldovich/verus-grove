@@ -43,7 +43,9 @@ impl BpTreeNode {
         unimplemented!();
     }
 
-    pub closed spec fn inv(self) -> bool {
+    closed spec fn inv(self) -> bool
+        decreases (self.height@)
+    {
         // ptstos and ptrs are in sync
         &&& (0 <= self.length <= MAX_DEGREE-1)
         &&& if self.height == 0 {
@@ -65,8 +67,22 @@ impl BpTreeNode {
             )
         } else {
             // internal node
-            // &&& (forall |i:int| 0 <= i < self.length ==> self.ptstos[i]@@.pptr == self.ptrs[i])
-            true
+            &&& (forall |i:int| 0 <= i <= self.length ==>
+                 {
+                     &&& self.ptstos[i]@.is_Some()
+                     &&& match self.ptstos[i]@.unwrap() {
+                         Sum::Left(ptsto) => {
+                             &&& ptsto@.pptr == self.ptrs[i]
+                             &&& ptsto@.value.is_Some()
+                             &&& ptsto@.value.unwrap().height@ == self.height@ - 1
+                             &&& ptsto@.value.unwrap().inv()
+                         }
+                         Sum::Right(_) => {
+                             false
+                         }
+                     }
+                 }
+            )
         }
     }
 }
@@ -100,10 +116,11 @@ pub proof fn tracked_as_ref<T>(tracked o:&Option<T>) -> (tracked a: Option<&T>)
     }
 }
 
-pub fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>)
+fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>)
     requires
       ptsto@@.value.is_Some(),
       ptsto@@.value.unwrap().inv(),
+      ptsto@@.value.unwrap().height == height,
       ptsto@@.pptr == node_ptr,
       ptsto@@.value.is_Some(),
 {
@@ -115,6 +132,7 @@ pub fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key
           ptsto@@.pptr == node_ptr.id(),
           ptsto@@.value.is_Some(),
           ptsto@@.value.unwrap().inv(),
+          ptsto@@.value.unwrap().height == height,
     {
         let node = node_ptr.borrow(ptsto);
         assert(node == ptsto@@.value.unwrap());
@@ -139,7 +157,7 @@ pub fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key
             // for i in 0..(node.length as usize)
             let mut i = 0;
             while i < node.length as usize 
-                invariant
+                invariant_ensures
                   node.inv(),
                   0 <= next_child_index <= node.length,
             {
@@ -152,6 +170,7 @@ pub fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key
             let tracked next_ptsto;
             let y = &node.ptstos[next_child_index];
             proof {
+                assert(node.height != 0);
                 let tracked y : &Option<_> = y.borrow();
                 assert(y.is_Some());
                 let tracked y = tracked_as_ref(y).tracked_unwrap();
