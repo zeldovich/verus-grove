@@ -1,9 +1,14 @@
 // in-memory B+ tree
-use vstd::{prelude::*, ptr::*, option::*};
+use vstd::{prelude::*, ptr::*};
 
 verus! {
 
 // FIXME: for loop on a slice iter
+
+enum Sum<L,R> {
+    Left(L),
+    Right(R)
+}
 
 type KeyType = u64;
 type ValueType = usize;
@@ -12,14 +17,17 @@ const MAX_DEGREE : usize = 8;
 pub struct BpTreeNode {
     keys: [KeyType; MAX_DEGREE-1],
     ptrs: [usize; MAX_DEGREE],
-    // FIXME: Would a a Tracked<Seq<PointsTo>> work/be better?
-    ptstos: [Tracked<PointsTo<BpTreeNode>>; MAX_DEGREE], // FIXME: option pointsto
+    // FIXME: Would a a Tracked<Seq<PointsTo>> work better? A: No, Seq only has spec fns.
+    ptstos: [Tracked<Option<Sum<PointsTo<BpTreeNode>, PointsTo<ValueType>>>>; MAX_DEGREE], // FIXME: option pointsto
     length: u8, // length of keys array
-    is_leaf: bool,
+
+    height: Ghost<u64>,
+    sigma: Ghost<Map<KeyType, ValueType>>,
 }
 
 pub struct BpTree {
     root: PPtr<BpTreeNode>,
+    height: u64,
     ptsto: Tracked<PointsTo<BpTreeNode>>,
 }
 
@@ -37,9 +45,29 @@ impl BpTreeNode {
 
     pub closed spec fn inv(self) -> bool {
         // ptstos and ptrs are in sync
-        (forall |i:int| 0 <= i < self.length ==> self.ptstos[i]@@.pptr == self.ptrs[i])
-        && 
-        (0 <= self.length <= MAX_DEGREE-1)
+        &&& (0 <= self.length <= MAX_DEGREE-1)
+        &&& if self.height == 0 {
+            // agrees completely with map
+            &&& (forall |i:int| 0 <= i < self.length ==>
+                 {
+                     &&& self.ptstos[i]@.is_Some()
+                     &&& match self.ptstos[i]@.unwrap() {
+                         Sum::Left(_) => {
+                             false
+                         }
+                         Sum::Right(ptsto) => {
+                             &&& ptsto@.pptr == self.ptrs[i]
+                             &&& ptsto@.value.is_Some()
+                             &&& self.sigma@[self.keys[i]] == ptsto@.value.unwrap()
+                         }
+                     }
+                 }
+            )
+        } else {
+            // internal node
+            // &&& (forall |i:int| 0 <= i < self.length ==> self.ptstos[i]@@.pptr == self.ptrs[i])
+            true
+        }
     }
 }
 
@@ -54,15 +82,14 @@ impl BpTreeNode {
 // 
 // Other approach:
 //
-// XXX: this escrow-based thing is what lifetimes (and e.g. the lifetime logic)
-// already handle.
-
+// XXX: this escrow-based thing is what lifetimes (and e.g. the RustBelt
+// lifetime logic) already handle.
 
 pub fn ref_tracked_to_tracked_ref<T>(r:&Tracked<T>) -> Tracked<&T> {
     return Tracked(r.borrow())
 }
 
-pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>)
+pub fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>)
     requires
       ptsto@@.value.is_Some(),
       ptsto@@.value.unwrap().inv(),
@@ -71,54 +98,69 @@ pub fn get(node_ptr:usize, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) ->
 {
     let mut node_ptr : PPtr<BpTreeNode> = PPtr::from_usize(node_ptr);
     let mut ptsto = ptsto;
+    let mut height = height;
     loop
         invariant_ensures
           ptsto@@.pptr == node_ptr.id(),
           ptsto@@.value.is_Some(),
           ptsto@@.value.unwrap().inv(),
     {
-        let x = node_ptr.borrow(ptsto);
-        assert(x == ptsto@@.value.unwrap());
-        assert(x.inv());
-        if x.is_leaf {
+        let node = node_ptr.borrow(ptsto);
+        assert(node == ptsto@@.value.unwrap());
+        assert(node.inv());
+        if height == 0 {
             // scan the leaf
-            // for (i, k) in x.keys.iter().enumerate() {
-            for i in 0..(x.length as usize)
-                invariant x.inv(),
+            // for (i, k) in node.keys.iter().enumerate() {
+            // for i in 0..(node.length as usize)
+            let mut i = 0;
+            while i < node.length as usize
+                invariant node.inv(),
             {
-                assert(x.inv());
-                if x.keys[i] == key {
-                    return Some(x.ptrs[i]);
+                if node.keys[i] == key {
+                    return Some(node.ptrs[i]);
                 }
             }
             return None;
         } else {
             // find the next node to search
-            let mut next_child_index : usize = x.length as usize;
-            // for (i,k) in x.keys.iter().enumerate() {
-            for i in 0..(x.length as usize)
+            let mut next_child_index : usize = node.length as usize;
+            // for (i,k) in node.keys.iter().enumerate() {
+            // for i in 0..(node.length as usize)
+            let mut i = 0;
+            while i < node.length as usize 
                 invariant
-                  x.inv(),
-                  0 <= next_child_index <= x.length,
+                  node.inv(),
+                  0 <= next_child_index <= node.length,
             {
-                assert(x.inv());
-                if key <= x.keys[i] {
+                if key <= node.keys[i] {
                     next_child_index = i;
-                    assert(x.inv());
-                    assert(0 <= next_child_index <= x.length);
                     break;
                 }
-                assert(x.inv());
-                assert(0 <= next_child_index <= x.length);
             }
-            node_ptr = PPtr::from_usize(x.ptrs[next_child_index]);
-
-            ptsto = ref_tracked_to_tracked_ref(&x.ptstos[next_child_index]);
+            node_ptr = PPtr::from_usize(node.ptrs[next_child_index]);
+            let tracked next_ptsto;
+            proof {
+                let tracked y = node.ptstos[next_child_index as int].borrow();
+                assert(y.is_Some());
+                let tracked y = y.unwrap();
+                match &y {
+                    &Sum::Left(ref ptsto) => {
+                        next_ptsto = ptsto;
+                    }
+                    &Sum::Right(ptsto) => {
+                        assert(false);
+                        next_ptsto = unreached();
+                    }
+                }
+            }
+            ptsto = Tracked(next_ptsto);
+            height = height - 1;
         }
     }
 }
 
 impl BpTree {
+    /*
 #[verifier(external_body)]
 pub fn put(&mut self, key:KeyType, value:ValueType) {
     if self.root.borrow(Tracked(self.ptsto.borrow())).length as usize == MAX_DEGREE - 1 {
@@ -153,6 +195,7 @@ pub fn put(&mut self, key:KeyType, value:ValueType) {
     }
     */
 }
+*/
 }
 
 pub fn main() {}

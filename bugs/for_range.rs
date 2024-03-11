@@ -6,6 +6,16 @@ spec fn P(n:usize) -> bool {
     32*n*n*n - n*n + n == 0
 }
 
+fn check_not_cond(n:usize)
+{
+    while n != 0
+        invariant n == n
+    {
+        break;
+    }
+    assert(n == 0);
+}
+
 
 fn use_while(n:usize)
 {
