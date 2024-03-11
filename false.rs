@@ -63,13 +63,6 @@ verus! {
         pub x:!
     }
 
-    #[verifier(external_body)]
-    proof fn false_to_anything<A>() -> (tracked r:A)
-        requires false
-    {
-        unimplemented!();
-    }
-
     // Definition B : PROP := □ fupd M1 False.
     type B = Arc<Box<_Dyn_PersistentAtomicUpdate<(), (), (), False>>>;
 
@@ -152,7 +145,7 @@ verus! {
                         Or::Left(tok) => {
                             token_witness_false(&tok, &bfi.wit);
                             r = Or::Left(tok);
-                            b = false_to_anything();
+                            b = proof_from_false();
                         }
                         Or::Right(b_in) => {
                             b = b_in.clone();

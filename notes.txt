@@ -1,3 +1,13 @@
+# Duplicating functionality across proof/exec/spec fns
+E.g. Option.as_ref does not work in proof mode, so added a tracked_as_ref.
+But, this tracked_as_ref is not a method of Option, but a function that takes an
+Option as input, so can't use "dot" syntax for calling function. Increases
+entropy in API.
+
+E.g. unwrap() for exec vs proof_from_false for spec.
+
+E.g. unreached.
+
 # Splitting of resources and mathematical predicate.
 An example of this is the phiPred and PhiRes thing in get_and_put_hocap.
 

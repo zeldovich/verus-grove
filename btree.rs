@@ -89,6 +89,17 @@ pub fn ref_tracked_to_tracked_ref<T>(r:&Tracked<T>) -> Tracked<&T> {
     return Tracked(r.borrow())
 }
 
+pub proof fn tracked_as_ref<T>(tracked o:&Option<T>) -> (tracked a: Option<&T>)
+    ensures
+        a.is_Some() <==> o.is_Some(),
+        a.is_Some() ==> o.get_Some_0() == a.get_Some_0(),
+{
+    match o {
+        Option::Some(x) => Option::Some(x),
+        Option::None => Option::None,
+    }
+}
+
 pub fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>)
     requires
       ptsto@@.value.is_Some(),
@@ -139,17 +150,19 @@ pub fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key
             }
             node_ptr = PPtr::from_usize(node.ptrs[next_child_index]);
             let tracked next_ptsto;
+            let y = &node.ptstos[next_child_index];
             proof {
-                let tracked y = node.ptstos[next_child_index as int].borrow();
+                let tracked y : &Option<_> = y.borrow();
                 assert(y.is_Some());
-                let tracked y = y.unwrap();
+                let tracked y = tracked_as_ref(y).tracked_unwrap();
+
                 match &y {
-                    &Sum::Left(ref ptsto) => {
+                    Sum::Left(ptsto) => {
                         next_ptsto = ptsto;
                     }
-                    &Sum::Right(ptsto) => {
+                    Sum::Right(ptsto) => {
                         assert(false);
-                        next_ptsto = unreached();
+                        next_ptsto = proof_from_false();
                     }
                 }
             }
