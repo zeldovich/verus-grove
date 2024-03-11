@@ -52,7 +52,7 @@ impl BpTreeNode {
             // agrees completely with map
             &&& (forall |i:int| 0 <= i < self.length ==>
                  {
-                     &&& self.ptstos[i]@.is_Some()
+                     &&& (#[trigger] self.ptstos[i])@.is_Some()
                      &&& match self.ptstos[i]@.unwrap() {
                          Sum::Left(_) => {
                              false
@@ -60,11 +60,12 @@ impl BpTreeNode {
                          Sum::Right(ptsto) => {
                              &&& ptsto@.pptr == self.ptrs[i]
                              &&& ptsto@.value.is_Some()
-                             &&& self.sigma@[self.keys[i]] == ptsto@.value.unwrap()
+                             &&& lookup(self.sigma@, self.keys[i]) == ptsto@.value
                          }
                      }
                  }
             )
+            &&& self.sigma@.dom() == self.keys@.take(self.length as int).to_set()
         } else {
             // internal node
             &&& (forall |i:int| 0 <= i <= self.length ==>
@@ -101,7 +102,9 @@ impl BpTreeNode {
 // XXX: this escrow-based thing is what lifetimes (and e.g. the RustBelt
 // lifetime logic) already handle.
 
-pub fn ref_tracked_to_tracked_ref<T>(r:&Tracked<T>) -> Tracked<&T> {
+pub fn ref_tracked_to_tracked_ref<T>(r:&Tracked<T>) -> (ret:Tracked<&T>)
+        ensures r@ == ret@
+{
     return Tracked(r.borrow())
 }
 
@@ -116,16 +119,29 @@ pub proof fn tracked_as_ref<T>(tracked o:&Option<T>) -> (tracked a: Option<&T>)
     }
 }
 
-fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>)
+spec fn lookup(m:Map<KeyType, ValueType>, key:KeyType) -> Option<ValueType> {
+    if m.contains_key(key) {
+        Some(m[key])
+    } else {
+        None
+    }
+}
+
+fn get(node_ptr:usize, height:u64, ptsto_in:&Tracked<PointsTo<BpTreeNode>>, key:KeyType) -> (ov:Option<ValueType>)
     requires
-      ptsto@@.value.is_Some(),
-      ptsto@@.value.unwrap().inv(),
-      ptsto@@.value.unwrap().height == height,
-      ptsto@@.pptr == node_ptr,
-      ptsto@@.value.is_Some(),
+        ptsto_in@@.value.is_Some(),
+        ptsto_in@@.value.unwrap().inv(),
+        ptsto_in@@.value.unwrap().height == height,
+        ptsto_in@@.pptr == node_ptr,
+        ptsto_in@@.value.is_Some(),
+    ensures
+        ov == lookup(ptsto_in@@.value.unwrap().sigma@, key)
 {
     let mut node_ptr : PPtr<BpTreeNode> = PPtr::from_usize(node_ptr);
-    let mut ptsto = ptsto;
+
+    // FIXME: if we introduce a new immutable binding to ptsto_in, the postcond fails.
+
+    let mut ptsto = ref_tracked_to_tracked_ref(ptsto_in);
     let mut height = height;
     loop
         invariant_ensures
@@ -133,10 +149,9 @@ fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:Key
           ptsto@@.value.is_Some(),
           ptsto@@.value.unwrap().inv(),
           ptsto@@.value.unwrap().height == height,
+          lookup(ptsto@@.value.unwrap().sigma@, key) == lookup(ptsto_in@@.value.unwrap().sigma@, key)
     {
         let node = node_ptr.borrow(ptsto);
-        assert(node == ptsto@@.value.unwrap());
-        assert(node.inv());
         if height == 0 {
             // scan the leaf
             // for (i, k) in node.keys.iter().enumerate() {
@@ -144,11 +159,29 @@ fn get(node_ptr:usize, height:u64, ptsto:Tracked<&PointsTo<BpTreeNode>>, key:Key
             let mut i = 0;
             while i < node.length as usize
                 invariant node.inv(),
+                0 <= i <= node.length,
+                !node.keys@.take(i as int).contains(key),
             {
                 if node.keys[i] == key {
-                    return Some(node.ptrs[i]);
+                    let y = &node.ptstos[i];
+                    let tracked val_ptsto;
+                    proof {
+                        val_ptsto = match &tracked_as_ref(y.borrow()).tracked_unwrap() {
+                            Sum::Left(ptsto) => {
+                                assert(false);
+                                proof_from_false()
+                            }
+                            Sum::Right(ptsto) => {
+                                ptsto
+                            }
+                        }
+                    }
+
+                    assert(lookup(ptsto@@.value.unwrap().sigma@, key) == val_ptsto@.value);
+                    return Some(*PPtr::from_usize(node.ptrs[i]).borrow(Tracked(val_ptsto)));
                 }
             }
+            assert(lookup(ptsto_in@@.value.unwrap().sigma@, key) == None::<ValueType>);
             return None;
         } else {
             // find the next node to search

@@ -1,3 +1,6 @@
+# Hidden foralls in axioms
+Various axioms have foralls in them that one implicitly relies on.
+
 # Duplicating functionality across proof/exec/spec fns
 E.g. Option.as_ref does not work in proof mode, so added a tracked_as_ref.
 But, this tracked_as_ref is not a method of Option, but a function that takes an
