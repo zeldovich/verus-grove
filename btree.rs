@@ -1,5 +1,5 @@
 // in-memory B+ tree
-use vstd::{prelude::*, ptr::*};
+use vstd::{prelude::*, ptr::*,relations::*};
 
 verus! {
 
@@ -31,6 +31,14 @@ pub struct BpTree {
     ptsto: Tracked<PointsTo<BpTreeNode>>,
 }
 
+spec fn trigger_leaf(i:int) -> bool {
+    true
+}
+
+spec fn trigger_inner_key(k:KeyType) -> bool {
+    true
+}
+
 impl BpTreeNode {
     // NOTE: implementing here would be annoying because the top-level node
     // would be a &mut BpTreeNode, whereas all the ones below would be PPtr's. If
@@ -47,12 +55,13 @@ impl BpTreeNode {
         decreases (self.height@)
     {
         // ptstos and ptrs are in sync
-        &&& (0 <= self.length <= MAX_DEGREE-1)
+        &&& (0 < self.length <= MAX_DEGREE-1)
+        &&& sorted_by(self.keys@.take(self.length as int), |x:KeyType, y:KeyType| x <= y)
         &&& if self.height == 0 {
-            // agrees completely with map
-            &&& (forall |i:int| 0 <= i < self.length ==>
+            // leaf node; agrees completely with map
+            &&& (forall |i:int| (#[trigger] trigger_leaf(i)) ==> 0 <= i < self.length ==>
                  {
-                     &&& (#[trigger] self.ptstos[i])@.is_Some()
+                     &&& self.ptstos[i]@.is_Some()
                      &&& match self.ptstos[i]@.unwrap() {
                          Sum::Left(_) => {
                              false
@@ -77,6 +86,10 @@ impl BpTreeNode {
                              &&& ptsto@.value.is_Some()
                              &&& ptsto@.value.unwrap().height@ == self.height@ - 1
                              &&& ptsto@.value.unwrap().inv()
+                             &&& (forall |key| #[trigger] trigger_inner_key(key) ==>
+                                  ((i > 0) ==> (self.keys[i-1] < key)) ==>
+                                  ((i < self.length) ==> (key <= self.keys[i])) ==>
+                                  lookup(self.sigma@, key) == lookup(ptsto@.value.unwrap().sigma@, key))
                          }
                          Sum::Right(_) => {
                              false
@@ -151,7 +164,7 @@ fn get(node_ptr:usize, height:u64, ptsto_in:&Tracked<PointsTo<BpTreeNode>>, key:
           ptsto@@.value.unwrap().height == height,
           lookup(ptsto@@.value.unwrap().sigma@, key) == lookup(ptsto_in@@.value.unwrap().sigma@, key)
     {
-        let node = node_ptr.borrow(ptsto);
+        let node : &_ = node_ptr.borrow(ptsto);
         if height == 0 {
             // scan the leaf
             // for (i, k) in node.keys.iter().enumerate() {
@@ -161,14 +174,18 @@ fn get(node_ptr:usize, height:u64, ptsto_in:&Tracked<PointsTo<BpTreeNode>>, key:
                 invariant node.inv(),
                 0 <= i <= node.length,
                 !node.keys@.take(i as int).contains(key),
+                // NOTE: not sure why these invariants were needed again:
+                node.height == 0, // FIXME: node is immutable, so why is this necessary?
+                ptsto@@.value.unwrap() == node,
+                lookup(ptsto@@.value.unwrap().sigma@, key) == lookup(ptsto_in@@.value.unwrap().sigma@, key),
             {
                 if node.keys[i] == key {
                     let y = &node.ptstos[i];
                     let tracked val_ptsto;
                     proof {
+                        assert(trigger_leaf(i as int));
                         val_ptsto = match &tracked_as_ref(y.borrow()).tracked_unwrap() {
                             Sum::Left(ptsto) => {
-                                assert(false);
                                 proof_from_false()
                             }
                             Sum::Right(ptsto) => {
@@ -177,6 +194,7 @@ fn get(node_ptr:usize, height:u64, ptsto_in:&Tracked<PointsTo<BpTreeNode>>, key:
                         }
                     }
 
+                    assert(lookup(node.sigma@, key) == val_ptsto@.value);
                     assert(lookup(ptsto@@.value.unwrap().sigma@, key) == val_ptsto@.value);
                     return Some(*PPtr::from_usize(node.ptrs[i]).borrow(Tracked(val_ptsto)));
                 }
@@ -190,18 +208,28 @@ fn get(node_ptr:usize, height:u64, ptsto_in:&Tracked<PointsTo<BpTreeNode>>, key:
             // for i in 0..(node.length as usize)
             let mut i = 0;
             while i < node.length as usize 
+                invariant
+                    next_child_index == node.length,
+                    0 <= i <= node.length,
                 invariant_ensures
-                  node.inv(),
-                  0 <= next_child_index <= node.length,
+                    node.inv(),
+                    0 <= next_child_index <= node.length,
+                    ((i > 0) ==> (node.keys[i-1] < key)),
+                ensures
+                    ((next_child_index > 0) ==> (node.keys[next_child_index-1] < key)),
+                    ((next_child_index < node.length) ==> (key <= node.keys[next_child_index as int])),
             {
+                assert(trigger_inner_key(key));
                 if key <= node.keys[i] {
                     next_child_index = i;
                     break;
                 }
+                i += 1;
             }
             node_ptr = PPtr::from_usize(node.ptrs[next_child_index]);
             let tracked next_ptsto;
             let y = &node.ptstos[next_child_index];
+            assert(trigger_inner_key(key));
             proof {
                 assert(node.height != 0);
                 let tracked y : &Option<_> = y.borrow();
