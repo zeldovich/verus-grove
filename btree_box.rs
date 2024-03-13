@@ -58,6 +58,36 @@ impl NodePtr {
                 if (leaf_node.length as usize) < MAX_DEGREE-1 {
                     return None;
                 }
+                // split
+                leaf_node.length = leaf_node.length/2;
+                let split_key = leaf_node.keys[leaf_node.length as usize - 1];
+                let n = leaf_node.length as usize;
+                let mut sibling = Box::new(LeafNode{
+                    keys: [0; MAX_DEGREE-1],
+                    values: [0; MAX_DEGREE-1],
+                    length: (MAX_DEGREE - 1 - n) as u8,
+                });
+                for i in n .. MAX_DEGREE-1 {
+                    sibling.keys[i - n] = leaf_node.keys[i];
+                    sibling.values[i - n] = leaf_node.values[i];
+                }
+                return Some((Sum::Right(sibling), split_key));
+            }
+        }
+    }
+}
+
+impl Tree {
+    pub fn new() -> Self {
+        Tree{root: None}
+    }
+
+    pub fn get(&self, key:KeyType) -> Option<ValueType> {
+        let mut cur_node : &NodePtr = self.root.as_ref()?;
+
+        loop {
+            match cur_node {
+
                 &Sum::Left(ref internal_node) => {
                     // find the next node
                     let mut index = internal_node.length as usize;

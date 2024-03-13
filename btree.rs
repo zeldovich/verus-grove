@@ -51,7 +51,7 @@ impl BpTreeNode {
         unimplemented!();
     }
 
-    spec fn in_child_range(self, i:int, key:KeyType) -> bool {
+    spec fn in_subtree_range(self, i:int, key:KeyType) -> bool {
         &&& ((i > 0) ==> (self.keys[i-1] < key))
         &&& ((i < self.length) ==> (key <= self.keys[i]))
     }
@@ -91,7 +91,8 @@ impl BpTreeNode {
                              &&& ptsto@.value.is_Some()
                              &&& ptsto@.value.unwrap().height@ == self.height@ - 1
                              &&& ptsto@.value.unwrap().inv()
-                             &&& (forall |key| #[trigger] trigger_inner_key(key) ==> self.in_child_range(i, key) ==>
+                             &&& (forall |key| #[trigger] trigger_inner_key(key) ==>
+                                  self.in_subtree_range(i, key) ==>
                                   lookup(self.sigma@, key) == lookup(ptsto@.value.unwrap().sigma@, key))
                          }
                          Sum::Right(_) => {
@@ -199,17 +200,15 @@ fn get(node_ptr:usize, height:u64, ptsto_in:Tracked<&PointsTo<BpTreeNode>>, key:
             // for (i,k) in node.keys.iter().enumerate() {
             // for i in 0..(node.length as usize)
             let mut i = 0;
-            while i < node.length as usize 
+            loop
                 invariant
                     next_child_index == node.length,
-                    0 <= i <= node.length,
-                invariant_ensures
-                    node.inv(),
-                    0 <= next_child_index <= node.length,
+                    0 <= i < node.length,
                     ((i > 0) ==> (node.keys[i-1] < key)), // key is in one of the subtrees rooted at ptrs[i:]
+                    node.inv(),
                 ensures
-                    ((next_child_index > 0) ==> (node.keys[next_child_index-1] < key)),
-                    ((next_child_index < node.length) ==> (key <= node.keys[next_child_index as int])),
+                    0 <= next_child_index <= node.length,
+                    node.in_subtree_range(next_child_index as int, key)
             {
                 assert(trigger_inner_key(key));
                 if key <= node.keys[i] {
@@ -217,6 +216,9 @@ fn get(node_ptr:usize, height:u64, ptsto_in:Tracked<&PointsTo<BpTreeNode>>, key:
                     break;
                 }
                 i += 1;
+                if i >= node.length as usize {
+                    break;
+                }
             }
             node_ptr = PPtr::from_usize(node.ptrs[next_child_index]);
             let tracked next_ptsto;
