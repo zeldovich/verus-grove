@@ -1,3 +1,4 @@
+// verifies against https://github.com/jaylorch/verus/commit/dcfbafc943a6c464312527a5585b772a08cf7bd1
 #![feature(never_type)]
 use vstd::{prelude::*, invariant::*};
 use std::sync::Arc;
@@ -139,8 +140,10 @@ verus! {
         {
             let tracked mut b:Arc<Box<_Dyn_PersistentAtomicUpdate<(),(),(),False>>>;
 
-            open_local_invariant!(&self.res => bfi =>{
-                open_atomic_invariant!(&bfi.i => r =>{
+            let tracked lc1 = Tracked::new(OpenInvariantCredit{});
+            let tracked lc2 = Tracked::new(OpenInvariantCredit{});
+            open_local_invariant!(lc1 => &self.res => bfi =>{
+                open_atomic_invariant!(lc2 => &bfi.i => r =>{
                     match r {
                         Or::Left(tok) => {
                             token_witness_false(&tok, &bfi.wit);
@@ -185,7 +188,8 @@ verus! {
         let tracked i2 = i.clone();
 
         let tracked mut b;
-        open_atomic_invariant!(&(*i) => r =>{
+        let tracked lc = Tracked::new(OpenInvariantCredit{});
+        open_atomic_invariant_in_proof!(lc => &(*i) => r =>{
             match r {
                 Or::Left(tok) => {
                     let tracked witness = token_freeze(tok);
