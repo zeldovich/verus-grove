@@ -157,7 +157,7 @@ fn get(node_ptr:usize, height:u64, ptsto_in:Tracked<&PointsTo<BpTreeNode>>, key:
     let mut ptsto = ptsto_in;
     let mut height = height;
     loop
-        invariant_ensures
+        invariant
           ptsto@@.pptr == node_ptr.id(),
           ptsto@@.value.is_Some(),
           ptsto@@.value.unwrap().inv(),
@@ -201,7 +201,7 @@ fn get(node_ptr:usize, height:u64, ptsto_in:Tracked<&PointsTo<BpTreeNode>>, key:
             // for i in 0..(node.length as usize)
             let mut i = 0;
             loop
-                invariant
+                invariant_except_break
                     next_child_index == node.length,
                     0 <= i < node.length,
                     ((i > 0) ==> (node.keys[i-1] < key)), // key is in one of the subtrees rooted at ptrs[i:]
