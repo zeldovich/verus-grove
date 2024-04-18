@@ -106,6 +106,9 @@ conditions stating that the option is Some.
   }
 }
 
+⟦ [∗ set] x ∈ (X:gset T), (f x) ⟧ ≜ big_sepS_res<T, ⟦f⟧>
+⟨ [∗ set] x ∈ (X:gset T), (f x) ⟩ ≜ |res| =>
+
 ⟦own γ (a:A)⟧ ≜ own<⟦A⟧>
 ⟨own γ (a:A)⟩ ≜ fn (o:⟦own γ (a:A)⟧) {
   o.gname() == γ

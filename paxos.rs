@@ -1,4 +1,6 @@
+#![allow(mixed_script_confusables)]
 #![verifier::loop_isolation(false)]
+#![allow(non_camel_case_types)]
 use vstd::{prelude::*};
 use std::vec::Vec;
 mod lock;
@@ -73,7 +75,6 @@ impl Acceptor {
     }
 
 }
-////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
 // Proposer
@@ -139,6 +140,104 @@ impl Proposer {
         }
         return EEpochStale
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Separation logic theory
+
+type gname = nat;
+
+#[verifier(external_body)]
+struct ⟦tok_points_to⟧ {
+}
+spec fn ⟨tok_points_to⟩(gamma:gname, k:u64) -> spec_fn(⟦tok_points_to⟧) -> bool;
+
+
+#[verifier(external_body)]
+#[verifier::reject_recursive_types(T)]
+struct LogPointsTo<T> {
+    _phantom : std::marker::PhantomData<T>,
+}
+
+struct LogPointsToData<T> {
+    gname: nat,
+    key: u64,
+    l: Seq<T>
+}
+
+impl<T> View for LogPointsTo<T> {
+    type V = LogPointsToData<T>;
+    open spec fn view(&self) -> LogPointsToData<T>;
+}
+
+#[verifier(external_body)]
+#[verifier::reject_recursive_types(T)]
+struct LogLb<T> {
+    _phantom : std::marker::PhantomData<T>,
+}
+
+struct LogLbData<T> {
+    gname: nat,
+    key: u64,
+    l: Seq<T>
+}
+
+impl<T> View for LogLb<T> {
+    type V = LogLbData<T>;
+    open spec fn view(&self) -> LogLbData<T>;
+}
+
+
+struct mp_system_names {
+    proposal_gn : gname,
+    state_gn : gname,
+}
+
+struct mp_server_names {
+    accepted_gn : gname,
+    vote_gn : gname,
+}
+
+/*
+spec fn ⟨is_proposal_facts⟩(γsys:X, γsrv:Y, st:Z) -> (spec_fn(res) -> bool) {
+}*/
+
+#[verifier::reject_recursive_types(K)]
+struct ⟦big_sepS⟧<K,R> {
+    contents: Map<K,R>
+}
+
+spec fn ⟨big_sepS⟩<K,R>(s:Set<K>, f:spec_fn(K) -> spec_fn(R) -> bool)
+                        -> spec_fn(⟦big_sepS⟧<K,R>) -> bool {
+    |res:⟦big_sepS⟧<_,_>| {
+        &&& res.contents.dom() == s
+        &&& forall |k| #[trigger] s.contains(k) ==> f(k)(res.contents[k])
+    }
+}
+
+type EntryType = StateType;
+type ⟦is_proposal_lb⟧ = LogLb<EntryType>;
+type ⟦is_proposal_facts⟧ = LogLb<EntryType>; // FIXME: wrong type
+type ⟦is_accepted_lb⟧ = LogLb<EntryType>;
+type ⟦own_accepted⟧ = LogPointsTo<EntryType>;
+
+type ⟦own_vote_tok⟧ = ⟦tok_points_to⟧;
+spec fn ⟨own_vote_tok⟩(γsrv:mp_server_names, epoch:u64) -> spec_fn(⟦own_vote_tok⟧) -> bool {
+    |res| {
+        ⟨tok_points_to⟩(γsrv.vote_gn, epoch)(res)
+    }
+}
+
+
+struct ⟦own_replica_ghost⟧ {
+    Hprop_lb : ⟦is_proposal_lb⟧,
+    Hprop_facts : ⟦is_proposal_facts⟧,
+    Hacc_lb : ⟦is_accepted_lb⟧,
+    HepochIneq : (),
+    Hacc : ⟦own_accepted⟧,
+    // Hacc_ub : ⟦???⟧, // FIXME: wand
+    Hunused : ⟦big_sepS⟧<u64, ()>,
+    Hvotes : ⟦big_sepS⟧<u64, ⟦own_vote_tok⟧>,
 }
     
 fn main() {}

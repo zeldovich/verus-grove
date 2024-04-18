@@ -27,7 +27,7 @@ verus! {
     // as one would want for proving false. This is not a proof, and this may
     // still be a bad assumption.
     #[verifier::external_body]
-    #[verifier::accept_recursive_types(A)]
+    #[verifier::reject_recursive_types(A)]
     pub struct Lock<A> {
         // phantom: core::marker::PhantomData<A>,
         // FIXME: going to run into trouble with having physical resources A
