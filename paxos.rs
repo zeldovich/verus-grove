@@ -1,81 +1,67 @@
+#![verifier::loop_isolation(false)]
 use vstd::{prelude::*};
 use std::vec::Vec;
 mod lock;
 
 verus! {
 
+const NUM_REPLICAS : u64 = 37;
 type StateType = u64;
+type Error = u64;
+const ENone : u64 = 0u64;
+const EEpochStale : u64 = 1u64;
+const ENotLeader : u64 = 2u64;
 
-struct PaxosState {
+////////////////////////////////////////////////////////////////////////////////
+// Acceptor
+
+struct AcceptorState {
     epoch : u64,
     accepted_epoch : u64,
     next_index : u64,
     state : StateType,
-    is_leader : bool,
 }
 
-struct ServerState {
-    ps : PaxosState,
-    clerks : Vec<&'static Clerk>,
-}
+type AcceptorResource = u64;
 
-// Want to be able to use this to call methods on the underlying server objects.
-#[verifier(external_body)]
-type Clerk = Server;
-
-type PaxosResource = u64;
-
-pub struct Server {
-    mu: lock::Lock<(ServerState, Tracked<PaxosResource>)>,
+pub struct Acceptor {
+    mu: lock::Lock<(AcceptorState, Tracked<AcceptorResource>)>,
 }
 
 #[derive(Clone, Copy)]
-struct ApplyAsFollowerArgs {
+struct AcceptorApplyArgs {
     epoch:u64,
     next_index:u64,
     state:StateType,
 }
 
-type Error = u64;
-type ApplyAsFollowerReply = u64;
+type AcceptorApplyReply = u64;
 
-const ENone : u64 = 0u64;
-const EEpochStale : u64 = 1u64;
-const ENotLeader : u64 = 2u64;
-
-const NUM_REPLICAS : u64 = 37;
-
-// FIXME: no way to make this work with circularity caused by Clerk = Server
-spec fn server_inv(s:ServerState, res:PaxosResource) -> bool {
-    forall |j| 0 <= j < s.clerks@.len() ==> s.clerks@[j].inv()
-}
-
-impl Server {
+impl Acceptor {
     spec fn inv(self) -> bool {
-        forall |s| #[trigger] self.mu.get_pred()(s) <==> server_inv(s.0, s.1@)
+        forall |s| #[trigger] self.mu.get_pred()(s) <==> true // server_inv(s.0, s.1@)
     }
 
-    fn apply_as_follower(&self, args:ApplyAsFollowerArgs) -> (ret:ApplyAsFollowerReply)
+    fn apply(&self, args:AcceptorApplyArgs) -> (ret:AcceptorApplyReply)
         requires self.inv()
     {
         let (mut s, mut res) = self.mu.lock();
-        let mut reply : ApplyAsFollowerReply;
+        let mut reply;
 
-        if s.ps.epoch <= args.epoch {
-            if s.ps.accepted_epoch == args.epoch {
-                if s.ps.next_index < args.next_index {
-                    s.ps.next_index = args.next_index;
-                    s.ps.state = args.state;
+        if s.epoch <= args.epoch {
+            if s.accepted_epoch == args.epoch {
+                if s.next_index < args.next_index {
+                    s.next_index = args.next_index;
+                    s.state = args.state;
                     reply = ENone;
                 } else { // args.next_index < s.next_index
                     reply = ENone;
                 }
             } else { // s.accepted_epoch < args.epoch, because s.accepted_epoch <= s.epoch <= args.epoch
-                s.ps.accepted_epoch = args.epoch;
-                s.ps.epoch = args.epoch;
-                s.ps.state = args.state;
-                s.ps.next_index = args.next_index;
-                s.ps.is_leader = false;
+                s.accepted_epoch = args.epoch;
+                s.epoch = args.epoch;
+                s.state = args.state;
+                s.next_index = args.next_index;
                 reply = ENone;
             }
         } else {
@@ -86,28 +72,66 @@ impl Server {
         return 0;
     }
 
+}
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+// Proposer
+
+struct ProposerState {
+    epoch : u64,
+    next_index : u64,
+    state : StateType,
+
+    is_leader : bool,
+    clerks : Vec<&'static Acceptor>,
+}
+
+type ProposerResource = u64;
+
+pub struct Proposer {
+    mu: lock::Lock<(ProposerState, Tracked<ProposerResource>)>,
+}
+
+spec fn proposer_inv(s:ProposerState, res:ProposerResource) -> bool {
+    &&& s.clerks@.len() == NUM_REPLICAS
+    &&& forall |j| 0 <= j < s.clerks.len() ==> #[trigger] s.clerks[j].inv()
+}
+
+impl Proposer {
+    spec fn inv(self) -> bool {
+        forall |s| #[trigger] self.mu.get_pred()(s) <==> proposer_inv(s.0, s.1@)
+    }
+
     // TODO: take as input a "step" function
-    fn try_apply(&self) -> Error {
+    fn try_apply(&self) -> Error
+        requires self.inv()
+    {
         let (mut s, mut res) = self.mu.lock();
-        if !s.ps.is_leader {
+        if !s.is_leader {
             self.mu.unlock((s, res));
             return ENotLeader;
         }
 
         let mut num_successes = 0u64;
-        let args = ApplyAsFollowerArgs{
-            epoch: s.ps.epoch,
-            next_index: s.ps.next_index,
-            state: s.ps.state,
+        let args = AcceptorApplyArgs{
+            epoch: s.epoch,
+            next_index: s.next_index,
+            state: s.state,
         };
 
         let mut i : usize = 0;
-        while i < NUM_REPLICAS as usize {
-            i += 1;
-            let reply = s.clerks[i].apply_as_follower(args);
+
+        while i < NUM_REPLICAS as usize
+            invariant
+              0 <= i <= NUM_REPLICAS,
+              0 <= num_successes <= i,
+        {
+            let reply = s.clerks[i].apply(args);
             if reply == ENone {
                 num_successes += 1;
             }
+            i += 1;
         }
 
         if 2*num_successes > NUM_REPLICAS {
@@ -115,8 +139,7 @@ impl Server {
         }
         return EEpochStale
     }
-
 }
-
+    
 fn main() {}
 }
