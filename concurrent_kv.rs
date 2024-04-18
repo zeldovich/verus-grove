@@ -10,13 +10,13 @@ verus! {
         id: Ghost<nat>,
     }
 
-    spec fn predGen(id:nat) -> FnSpec(KvState) -> bool {
-        |s:KvState| s.get_id() == id && s.kv_inv()
+    spec fn pred_gen(gname:nat) -> spec_fn(KvState) -> bool {
+        |s:KvState| s.gname() == gname && s.kv_inv()
     }
 
     impl KvServer {
         spec fn inv(self) -> bool {
-            self.s.getPred() == predGen(self.id@)
+            self.s.get_pred() == pred_gen(self.id@)
         }
 
         fn new() -> (ret:(KvServer,
@@ -31,9 +31,8 @@ verus! {
             let mut kv = r.0;
             let mut ptstoA = r.1;
             let mut ptstoB = r.2;
-            let ghost id = kv.get_id();
-            return (KvServer{ id: Ghost(id),
-                              s: lock::Lock::<KvState>::new(kv, Ghost(predGen(id))) },
+            return (KvServer{ id: Ghost(kv.gname()),
+                              s: lock::Lock::<KvState>::new(kv, Ghost(pred_gen(kv.gname()))) },
                     ptstoA, ptstoB)
         }
 
@@ -72,8 +71,7 @@ verus! {
         let mut ptstoB = r.2;
         let kv1 = kv.clone();
 
-        spawn(move ||
-        {
+        spawn(move || {
             let mut ptstoA = ptstoA;
             let r = (*kv1).get(0, Tracked(ptstoA.borrow()));
             assert(r == 0);
@@ -83,8 +81,10 @@ verus! {
             assert(r == 37);
         });
 
-        let r = (*kv).get(1, Tracked(ptstoB.borrow()));
-        assert(r == 0);
+        spawn(move || {
+            let r = (*kv).get(1, Tracked(ptstoB.borrow()));
+            assert(r == 0);
+        });
     }
 
 } // verus!

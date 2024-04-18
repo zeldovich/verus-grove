@@ -164,5 +164,4 @@ verus! {
         let r = kv.get(0, Tracked(ptsto_a.borrow()));
         assert(r == 37);
     }
-
 } // verus!

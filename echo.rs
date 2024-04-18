@@ -91,7 +91,7 @@ verus! {
         pub fn receive<Phi, Au:AtomicUpdate<Message, NetworkPointsTo, (), (NetworkPointsTo, Phi)>>
             (&self, au:Tracked<Au>)
                        -> (ret:(Vec<u8>, Tracked<Phi>))
-            (
+            requires (
                 forall |msg:_, netptsto:_|
                 (netptsto@.msgs().contains(Message{
                     data:data@,

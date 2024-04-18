@@ -17,8 +17,18 @@ verus! {
         }
     }
 
+    // Allowing recursive types is OK here because there should be no way to
+    // construct an object of type
+    // 
+    // struct R {
+    //     l: Lock<R>
+    // }
+    //
+    // as one would want for proving false. This is not a proof, and this may
+    // still be a bad assumption.
     #[verifier::external_body]
-    pub struct Lock< #[verifier::reject_recursive_types] A> {
+    #[verifier::accept_recursive_types(A)]
+    pub struct Lock<A> {
         // phantom: core::marker::PhantomData<A>,
         // FIXME: going to run into trouble with having physical resources A
         // inside the AtomicInvariant.
@@ -28,10 +38,10 @@ verus! {
 
     impl<A> Lock<A> {
 
-        pub spec fn get_pred(self) -> FnSpec(A) -> bool;
+        pub spec fn get_pred(self) -> spec_fn(A) -> bool;
 
         #[verifier::external_body]
-        pub fn new(a:A, Ghost(pred):Ghost<FnSpec(A) -> bool>) -> (l:Lock<A>)
+        pub fn new(a:A, Ghost(pred):Ghost<spec_fn(A) -> bool>) -> (l:Lock<A>)
             requires pred(a)
             ensures l.get_pred() == pred
             // ensures forall|a:A| l.pred(a) == pred(a)
