@@ -143,7 +143,46 @@ impl Proposer {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Separation logic theory
+// General definitions
+
+type True = ();
+enum Or<A,B> {Left(A), Right(B)}
+
+trait iProp {
+    spec fn pure_prop(Self) -> bool;
+}
+
+#[verifier(external_body)]
+#[verifier::reject_recursive_types(P)]
+#[verifier::reject_recursive_types(Q)]
+struct ⟦wand⟧<⟦P⟧,⟦Q⟧> {
+    _phantom1 : std::marker::PhantomData<⟦P⟧>,
+    _phantom2 : std::marker::PhantomData<⟦Q⟧>,
+}
+spec fn ⟨wand⟩<⟦P⟧,⟦Q⟧>(
+    ⟨P⟩:spec_fn(⟦P⟧) -> bool,
+    ⟨Q⟩:spec_fn(⟦Q⟧) -> bool
+) -> bool;
+impl<P,Q> ⟦wand⟧<P,Q> {
+    #[verifier(external_body)]
+    proof fn instantiate(i:P) -> (out:Q)
+        requires
+          exists |⟨P⟩, ⟨Q⟩| { &&&
+            ⟨wand⟩(⟨P⟩,⟨Q⟩) &&&
+            ⟨P⟩(i)
+          }
+
+        ensures
+          forall |⟨P⟩, ⟨Q⟩| ⟨wand⟩(⟨P⟩,⟨Q⟩) ==> ⟨Q⟩(out)
+
+        opens_invariants none
+    {
+        unimplemented!();
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// General resources
 
 type gname = nat;
 
@@ -154,39 +193,36 @@ spec fn ⟨tok_points_to⟩(gamma:gname, k:u64) -> spec_fn(⟦tok_points_to⟧) 
 
 
 #[verifier(external_body)]
+#[verifier::reject_recursive_types(K)]
 #[verifier::reject_recursive_types(T)]
-struct LogPointsTo<T> {
-    _phantom : std::marker::PhantomData<T>,
+struct ⟦mlist_ptsto⟧<K,T> {
+    _phantom1 : std::marker::PhantomData<K>,
+    _phantom2 : std::marker::PhantomData<T>,
 }
+spec fn ⟨mlist_ptsto⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool;
 
-struct LogPointsToData<T> {
-    gname: nat,
-    key: u64,
-    l: Seq<T>
-}
-
-impl<T> View for LogPointsTo<T> {
-    type V = LogPointsToData<T>;
-    open spec fn view(&self) -> LogPointsToData<T>;
-}
 
 #[verifier(external_body)]
+#[verifier::reject_recursive_types(K)]
 #[verifier::reject_recursive_types(T)]
-struct LogLb<T> {
-    _phantom : std::marker::PhantomData<T>,
+struct ⟦mlist_ptsto_lb⟧<K,T> {
+    _phantom1 : std::marker::PhantomData<K>,
+    _phantom2 : std::marker::PhantomData<T>,
 }
+spec fn ⟨mlist_ptsto_lb⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool;
 
-struct LogLbData<T> {
-    gname: nat,
-    key: u64,
-    l: Seq<T>
+                 
+#[verifier(external_body)]
+#[verifier::reject_recursive_types(K)]
+#[verifier::reject_recursive_types(T)]
+struct ⟦mlist_ptsto_ro⟧<K,T> {
+    _phantom1 : std::marker::PhantomData<K>,
+    _phantom2 : std::marker::PhantomData<T>,
 }
+spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool;
 
-impl<T> View for LogLb<T> {
-    type V = LogLbData<T>;
-    open spec fn view(&self) -> LogLbData<T>;
-}
-
+////////////////////////////////////////////////////////////////////////////////
+// Paxos separation logic theory
 
 struct mp_system_names {
     proposal_gn : gname,
@@ -198,15 +234,11 @@ struct mp_server_names {
     vote_gn : gname,
 }
 
-/*
-spec fn ⟨is_proposal_facts⟩(γsys:X, γsrv:Y, st:Z) -> (spec_fn(res) -> bool) {
-}*/
 
 #[verifier::reject_recursive_types(K)]
 struct ⟦big_sepS⟧<K,R> {
     contents: Map<K,R>
 }
-
 spec fn ⟨big_sepS⟩<K,R>(s:Set<K>, f:spec_fn(K) -> spec_fn(R) -> bool)
                         -> spec_fn(⟦big_sepS⟧<K,R>) -> bool {
     |res:⟦big_sepS⟧<_,_>| {
@@ -215,11 +247,14 @@ spec fn ⟨big_sepS⟩<K,R>(s:Set<K>, f:spec_fn(K) -> spec_fn(R) -> bool)
     }
 }
 
+
 type EntryType = StateType;
-type ⟦is_proposal_lb⟧ = LogLb<EntryType>;
-type ⟦is_proposal_facts⟧ = LogLb<EntryType>; // FIXME: wrong type
-type ⟦is_accepted_lb⟧ = LogLb<EntryType>;
-type ⟦own_accepted⟧ = LogPointsTo<EntryType>;
+type ⟦is_proposal_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
+type ⟦is_proposal_facts⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>; // FIXME: wrong type
+type ⟦is_accepted_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
+type ⟦own_accepted⟧ = ⟦mlist_ptsto⟧<u64, EntryType>;
+type ⟦is_accepted_ro⟧ = ⟦mlist_ptsto_ro⟧<u64, EntryType>;
+
 
 type ⟦own_vote_tok⟧ = ⟦tok_points_to⟧;
 spec fn ⟨own_vote_tok⟩(γsrv:mp_server_names, epoch:u64) -> spec_fn(⟦own_vote_tok⟧) -> bool {
@@ -228,14 +263,19 @@ spec fn ⟨own_vote_tok⟩(γsrv:mp_server_names, epoch:u64) -> spec_fn(⟦own_v
     }
 }
 
+type ⟦is_accepted_upper_bound⟧ = (
+    ⟦is_accepted_ro⟧,
+    // □(dyn_Atomic_update)
+);
+
 
 struct ⟦own_replica_ghost⟧ {
     Hprop_lb : ⟦is_proposal_lb⟧,
     Hprop_facts : ⟦is_proposal_facts⟧,
     Hacc_lb : ⟦is_accepted_lb⟧,
-    HepochIneq : (),
+    HepochIneq : (), // pure
     Hacc : ⟦own_accepted⟧,
-    // Hacc_ub : ⟦???⟧, // FIXME: wand
+    Hacc_ub : Or<True, ⟦is_accepted_upper_bound⟧>,
     Hunused : ⟦big_sepS⟧<u64, ()>,
     Hvotes : ⟦big_sepS⟧<u64, ⟦own_vote_tok⟧>,
 }
