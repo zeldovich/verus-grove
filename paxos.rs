@@ -177,7 +177,7 @@ trait wand_tr<P, Q> {
     spec fn pre(&self) -> spec_fn(x:P) -> bool;
     spec fn post(&self) -> spec_fn(x:Q) -> bool;
 
-    proof fn instantiate(tracked self, i:P) -> (out:Q) where Self: std::marker::Sized
+    proof fn instantiate(tracked self, tracked i:P) -> (tracked out:Q) where Self: std::marker::Sized
         requires self.pre()(i)
         ensures self.post()(out)
         opens_invariants none
@@ -196,17 +196,17 @@ impl<⟦P⟧, ⟦Q⟧> wand_tr<⟦P⟧, ⟦Q⟧> for ⟦wand⟧<⟦P⟧, ⟦Q⟧
     spec fn post(&self) -> spec_fn(x:⟦Q⟧) -> bool;
 
     #[verifier(external_body)]
-    proof fn instantiate(tracked self, i:⟦P⟧) -> (out:⟦Q⟧) {
+    proof fn instantiate(tracked self, tracked i:⟦P⟧) -> (tracked out:⟦Q⟧) {
         unimplemented!();
     }
 }
 impl<⟦P⟧, ⟦Q⟧> ⟦wand⟧<⟦P⟧, ⟦Q⟧> {
     #[verifier(external_body)]
-    fn from<T:wand_tr<⟦P⟧,⟦Q⟧>>(x:T) -> (r:Self)
+    proof fn from<T:wand_tr<⟦P⟧,⟦Q⟧>>(tracked x:T) -> (tracked r:Self)
         ensures r.pre() == x.pre(),
         r.post() == x.post(),
     {
-        unimplemented!();
+        unimplemented!()
     }
 }
 spec fn ⟨wand⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec_fn(⟦Q⟧) -> bool)
@@ -223,7 +223,7 @@ spec fn ⟨wand⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:sp
 trait forall_tr<X, ⟦A⟧> {
     spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
 
-    proof fn instantiate(self, x:X) -> (out:⟦A⟧) where Self: std::marker::Sized
+    proof fn instantiate(self, x:X) -> (tracked out:⟦A⟧) where Self: std::marker::Sized
         ensures self.post()(x)(out)
     ;
 }
@@ -335,8 +335,8 @@ spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist
 #[verifier(external_body)]
 proof fn mlist_ptsto_lb_comparable<K,T>(
     γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
-    Hlb1: &⟦mlist_ptsto_lb⟧<K,T>,
-    Hlb2: &⟦mlist_ptsto_lb⟧<K,T>,
+    tracked Hlb1: &⟦mlist_ptsto_lb⟧<K,T>,
+    tracked Hlb2: &⟦mlist_ptsto_lb⟧<K,T>,
 )
 requires
   holds(*Hlb1, ⟨mlist_ptsto_lb⟩(γ, k, l)),
@@ -351,8 +351,8 @@ ensures
 #[verifier(external_body)]
 proof fn mlist_ptsto_update<K,T>(
     γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
-    Hptsto: ⟦mlist_ptsto⟧<K,T>,
-) -> (Hout:⟦mlist_ptsto⟧<K,T>)
+    tracked Hptsto: ⟦mlist_ptsto⟧<K,T>,
+) -> (tracked Hout:⟦mlist_ptsto⟧<K,T>)
 requires
   l.is_prefix_of(l_p),
   holds(Hptsto, ⟨mlist_ptsto⟩(γ, k, l)),
@@ -367,8 +367,8 @@ ensures
 #[verifier(external_body)]
 proof fn mlist_ptsto_get_lb<K,T>(
     γ:gname, k:K, l:Seq<T>,
-    Hptsto: &⟦mlist_ptsto⟧<K,T>,
-) -> (Hout:⟦mlist_ptsto_lb⟧<K,T>)
+    tracked Hptsto: &⟦mlist_ptsto⟧<K,T>,
+) -> (tracked Hout:⟦mlist_ptsto_lb⟧<K,T>)
 requires
   holds(*Hptsto, ⟨mlist_ptsto⟩(γ, k, l)),
 ensures
@@ -380,8 +380,8 @@ ensures
 #[verifier(external_body)]
 proof fn mlist_ptsto_lb_mono<K,T>(
     γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
-    Hptsto: &⟦mlist_ptsto_lb⟧<K,T>,
-) -> (Hout:⟦mlist_ptsto_lb⟧<K,T>)
+    tracked Hptsto: &⟦mlist_ptsto_lb⟧<K,T>,
+) -> (tracked Hout:⟦mlist_ptsto_lb⟧<K,T>)
 requires
   l_p.is_prefix_of(l),
   holds(*Hptsto, ⟨mlist_ptsto_lb⟩(γ, k, l)),
@@ -542,9 +542,9 @@ proof fn ghost_replica_get_lb(
     γsys:mp_system_names,
     γsrv:mp_server_names,
     st:MPaxosState,
-    Hown: &⟦own_replica_ghost⟧,
+    tracked Hown: &⟦own_replica_ghost⟧,
 ) ->
-(ret: ⟦is_accepted_lb⟧)
+(tracked ret: ⟦is_accepted_lb⟧)
   requires holds(*Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
   ensures
     ⟨is_accepted_lb⟩(γsrv, st.accepted_epoch, st.log)(ret)
@@ -558,11 +558,11 @@ proof fn ghost_replica_accept_same_epoch(
     st:MPaxosState,
     epoch_p:u64,
     log_p: Seq<EntryType>,
-    Hown: ⟦own_replica_ghost⟧,
-    Hprop_lb: ⟦is_proposal_lb⟧,
-    Hprop_facts: ⟦is_proposal_facts⟧,
+    tracked Hown: ⟦own_replica_ghost⟧,
+    tracked Hprop_lb: ⟦is_proposal_lb⟧,
+    tracked Hprop_facts: ⟦is_proposal_facts⟧,
 ) ->
-(ret: ⟦own_replica_ghost⟧)
+(tracked ret: ⟦own_replica_ghost⟧)
   requires
     st.epoch <= epoch_p,
     st.accepted_epoch == epoch_p,
@@ -574,7 +574,7 @@ proof fn ghost_replica_accept_same_epoch(
     st.epoch == epoch_p,
     ⟨own_replica_ghost⟩(γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
 {
-    let mut Hown = Hown;
+    let tracked mut Hown = Hown;
     // assert (st.epoch == epoch_p);
     // assert (st.accepted_epoch == st.epoch);
     mlist_ptsto_lb_comparable(γsys.proposal_gn, epoch_p, st.log, log_p,
@@ -593,11 +593,11 @@ proof fn ghost_replica_accept_same_epoch_old(
     st:MPaxosState,
     epoch_p:u64,
     log_p: Seq<EntryType>,
-    Hown: &⟦own_replica_ghost⟧,
-    Hprop_lb: &⟦is_proposal_lb⟧,
-    Hprop_facts: &⟦is_proposal_facts⟧,
+    tracked Hown: &⟦own_replica_ghost⟧,
+    tracked Hprop_lb: &⟦is_proposal_lb⟧,
+    tracked Hprop_facts: &⟦is_proposal_facts⟧,
 ) ->
-(ret: ⟦is_accepted_lb⟧)
+(tracked ret: ⟦is_accepted_lb⟧)
   requires
     st.epoch <= epoch_p,
     st.accepted_epoch == epoch_p,
@@ -611,6 +611,41 @@ proof fn ghost_replica_accept_same_epoch_old(
     mlist_ptsto_lb_comparable(γsys.proposal_gn, epoch_p, st.log, log_p,
                                &Hown.Hprop_lb, &Hprop_lb);
     mlist_ptsto_lb_mono(γsrv.accepted_gn, st.accepted_epoch, st.log, log_p, &Hown.Hacc_lb)
+}
+
+// This is the first complicated lemma. The other ones were not that bad.
+proof fn ghost_replica_accept_new_epoch(
+    γsys:mp_system_names,
+    γsrv:mp_server_names,
+    st:MPaxosState,
+    epoch_p:u64,
+    log_p: Seq<EntryType>,
+    tracked Hown: ⟦own_replica_ghost⟧,
+    tracked Hprop_lb: ⟦is_proposal_lb⟧,
+    tracked Hprop_facts: ⟦is_proposal_facts⟧,
+) ->
+
+(tracked ret: ⟦own_replica_ghost⟧)
+  requires
+    st.epoch <= epoch_p,
+    st.accepted_epoch != epoch_p,
+    holds(Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
+    holds(Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch_p, log_p)),
+    holds(Hprop_facts, ⟨is_proposal_facts⟩(γsys, epoch_p, log_p)),
+  ensures
+    ⟨own_replica_ghost⟩(γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
+{
+    let tracked mut Hown = Hown;
+    if st.epoch < epoch_p {
+        let tracked mut Hacc = Hown.Hunused.contents.tracked_remove(epoch_p);
+        Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, Seq::empty(), log_p, Hacc);
+        let tracked Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hacc);
+    } else if st.epoch == epoch_p {
+        
+    } else {
+        assert(false);
+    }
+    Hown
 }
 
 fn main() {}
