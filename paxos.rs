@@ -163,27 +163,34 @@ trait wand_tr<P, Q> {
 
 /// model for dyn wand_tr
 #[verifier(external_body)]
-#[verifier::reject_recursive_types(P)]
-#[verifier::reject_recursive_types(Q)]
-struct ⟦wand⟧<P,Q> {
-    _phantom : std::marker::PhantomData<(P,Q)>,
+#[verifier::reject_recursive_types(⟦P⟧)]
+#[verifier::reject_recursive_types(⟦Q⟧)]
+struct ⟦wand⟧<⟦P⟧,⟦Q⟧> {
+    _phantom : std::marker::PhantomData<(⟦P⟧,⟦Q⟧)>,
 }
-impl<P, Q> wand_tr<P, Q> for ⟦wand⟧<P, Q> {
-    spec fn pre(&self) -> spec_fn(x:P) -> bool;
-    spec fn post(&self) -> spec_fn(x:Q) -> bool;
+impl<⟦P⟧, ⟦Q⟧> wand_tr<⟦P⟧, ⟦Q⟧> for ⟦wand⟧<⟦P⟧, ⟦Q⟧> {
+    spec fn pre(&self) -> spec_fn(x:⟦P⟧) -> bool;
+    spec fn post(&self) -> spec_fn(x:⟦Q⟧) -> bool;
 
     #[verifier(external_body)]
-    proof fn instantiate(tracked self, i:P) -> (out:Q) {
+    proof fn instantiate(tracked self, i:⟦P⟧) -> (out:⟦Q⟧) {
         unimplemented!();
     }
 }
-impl<P, Q> ⟦wand⟧<P, Q> {
+impl<⟦P⟧, ⟦Q⟧> ⟦wand⟧<⟦P⟧, ⟦Q⟧> {
     #[verifier(external_body)]
-    fn from<T:wand_tr<P,Q>>(x:T) -> (r:Self)
+    fn from<T:wand_tr<⟦P⟧,⟦Q⟧>>(x:T) -> (r:Self)
         ensures r.pre() == x.pre(),
         r.post() == x.post(),
     {
         unimplemented!();
+    }
+}
+spec fn ⟨wand⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec_fn(⟦Q⟧) -> bool)
+    -> spec_fn(⟦wand⟧<⟦P⟧,⟦Q⟧>) -> bool {
+    |res:⟦wand⟧<_,_>| {
+        &&& res.pre() == ⟨P⟩
+        &&& res.post() == ⟨Q⟩
     }
 }
 
@@ -363,13 +370,14 @@ spec fn ⟨is_accepted_upper_bound⟩(γsrv:mp_server_names, log:Seq<EntryType>,
             &&& logPrefix.is_prefix_of(log)
             &&& ⟨is_accepted_ro⟩(γsrv, acceptedEpoch, logPrefix)(res.0)
             &&& ⟨□⟩(
-                ⟨forall⟩(
-                |x:X| { |r| {
-                        true
-                    }
-                }
-                )
-                )(res.1)
+                ⟨forall⟩(|epoch_p:u64| {
+                ⟨wand⟩(
+                    |_x| acceptedEpoch < epoch_p,
+                    ⟨wand⟩(
+                        |_x| epoch_p < newEpoch,
+                        ⟨is_accepted_ro⟩(γsrv, epoch_p, Seq::empty())
+                    )
+                )}))(res.1)
         }
     }
 }
