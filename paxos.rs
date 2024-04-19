@@ -239,7 +239,7 @@ impl<X,⟦A⟧> forall_tr<X,⟦A⟧> for ⟦forall⟧<X,⟦A⟧> {
     spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
 
     #[verifier(external_body)]
-    proof fn instantiate(self, x:X) -> (out:⟦A⟧) where Self: std::marker::Sized {
+    proof fn instantiate(self, x:X) -> (tracked out:⟦A⟧) where Self: std::marker::Sized {
         unimplemented!();
     }
 }
