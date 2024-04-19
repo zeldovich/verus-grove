@@ -148,38 +148,76 @@ impl Proposer {
 type True = ();
 enum Or<A,B> {Left(A), Right(B)}
 
+/// A type is an of class iProp if there's also a pure proposition associated
+/// with it.
 trait iProp {
-    spec fn pure_prop(Self) -> bool;
+    spec fn pure(&self) -> bool;
 }
 
+struct Pure {
+    ghost prop:spec_fn() -> bool
+}
+impl iProp for Pure {
+    spec fn pure(&self) -> bool {
+        (self.prop)()
+    }
+}
+impl Pure {
+    proof fn new(P:spec_fn() -> bool) -> (r:Pure)
+        ensures P() <==> (r.prop)()
+    {
+        Pure { prop:P }
+    }
+}
+
+/// P -∗ Q
+trait wand_tr<P:iProp, Q:iProp> {
+    proof fn instantiate(tracked self, i:P) -> (out:Q) where Self: std::marker::Sized
+        requires i.pure()
+        ensures out.pure()
+        opens_invariants none
+        ;
+}
+
+/// model for dyn wand_tr
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(P)]
 #[verifier::reject_recursive_types(Q)]
-struct ⟦wand⟧<⟦P⟧,⟦Q⟧> {
-    _phantom1 : std::marker::PhantomData<⟦P⟧>,
-    _phantom2 : std::marker::PhantomData<⟦Q⟧>,
+struct wand<P:iProp,Q:iProp> {
+    _phantom1 : std::marker::PhantomData<P>,
+    _phantom2 : std::marker::PhantomData<Q>,
 }
-spec fn ⟨wand⟩<⟦P⟧,⟦Q⟧>(
-    ⟨P⟩:spec_fn(⟦P⟧) -> bool,
-    ⟨Q⟩:spec_fn(⟦Q⟧) -> bool
-) -> bool;
-impl<P,Q> ⟦wand⟧<P,Q> {
+impl<P:iProp,Q:iProp> wand_tr<P,Q> for wand<P,Q> {
     #[verifier(external_body)]
-    proof fn instantiate(i:P) -> (out:Q)
-        requires
-          exists |⟨P⟩, ⟨Q⟩| { &&&
-            ⟨wand⟩(⟨P⟩,⟨Q⟩) &&&
-            ⟨P⟩(i)
-          }
-
-        ensures
-          forall |⟨P⟩, ⟨Q⟩| ⟨wand⟩(⟨P⟩,⟨Q⟩) ==> ⟨Q⟩(out)
-
-        opens_invariants none
-    {
+    proof fn instantiate(tracked self, i:P) -> (out:Q) {
         unimplemented!();
     }
 }
+impl<P:iProp,Q:iProp> iProp for wand<P,Q> {
+    spec fn pure(&self) -> bool {
+        true
+    }
+}
+impl<P:iProp,Q:iProp> wand<P,Q> {
+    #[verifier(external_body)]
+    fn from<T:wand_tr<P,Q>>(x:T) -> Self {
+        unimplemented!();
+    }
+}
+
+trait iPred<X> {
+    spec fn pred(&self, x:X) -> bool;
+}
+
+/// ∀ (x:X), A(x)   where A is a predicate.
+trait forall_tr<X, Aout:iPred<X>> {
+    proof fn instantiate(self, x:X) -> (r:Aout) where Self: std::marker::Sized
+        ensures r.pred(x)
+    ;
+}
+
+/// model for dyn forall_tr
+/// TODO
 
 ////////////////////////////////////////////////////////////////////////////////
 // General resources
@@ -189,7 +227,9 @@ type gname = nat;
 #[verifier(external_body)]
 struct ⟦tok_points_to⟧ {
 }
-spec fn ⟨tok_points_to⟩(gamma:gname, k:u64) -> spec_fn(⟦tok_points_to⟧) -> bool;
+impl iPred<(gname, u64)> for ⟦tok_points_to⟧ {
+    spec fn pred(&self, r:(gname, u64)) -> bool;
+}
 
 
 #[verifier(external_body)]
@@ -236,14 +276,13 @@ struct mp_server_names {
 
 
 #[verifier::reject_recursive_types(K)]
-struct ⟦big_sepS⟧<K,R> {
+struct ⟦big_sepS⟧<K, R:iPred<K>> {
     contents: Map<K,R>
 }
-spec fn ⟨big_sepS⟩<K,R>(s:Set<K>, f:spec_fn(K) -> spec_fn(R) -> bool)
-                        -> spec_fn(⟦big_sepS⟧<K,R>) -> bool {
-    |res:⟦big_sepS⟧<_,_>| {
-        &&& res.contents.dom() == s
-        &&& forall |k| #[trigger] s.contains(k) ==> f(k)(res.contents[k])
+impl<K, R:iPred<K>> iPred<Set<K>> for ⟦big_sepS⟧<K,R> {
+    spec fn pred(&self, s:Set<K>) -> bool {
+        &&& self.contents.dom() == s
+        &&& forall |k| #[trigger] s.contains(k) ==> (self.contents[k].pred(k))
     }
 }
 
@@ -257,9 +296,10 @@ type ⟦is_accepted_ro⟧ = ⟦mlist_ptsto_ro⟧<u64, EntryType>;
 
 
 type ⟦own_vote_tok⟧ = ⟦tok_points_to⟧;
-spec fn ⟨own_vote_tok⟩(γsrv:mp_server_names, epoch:u64) -> spec_fn(⟦own_vote_tok⟧) -> bool {
-    |res| {
-        ⟨tok_points_to⟩(γsrv.vote_gn, epoch)(res)
+impl iPred<(mp_server_names, u64)> for ⟦own_vote_tok⟧ {
+    spec fn pred(&self, r:(mp_server_names, u64)) -> bool {
+        let (γsrv, epoch) = r;
+        ⟦tok_points_to⟧::pred(self, (γsrv.vote_gn, epoch))
     }
 }
 
@@ -276,7 +316,7 @@ struct ⟦own_replica_ghost⟧ {
     HepochIneq : (), // pure
     Hacc : ⟦own_accepted⟧,
     Hacc_ub : Or<True, ⟦is_accepted_upper_bound⟧>,
-    Hunused : ⟦big_sepS⟧<u64, ()>,
+    Hunused : ⟦big_sepS⟧<u64, ⟦own_accepted⟧>, // FIXME: this is now broken
     Hvotes : ⟦big_sepS⟧<u64, ⟦own_vote_tok⟧>,
 }
     
