@@ -287,6 +287,9 @@ spec fn ⟨□⟩<⟦P⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool) -> spec_fn(⟦□�
     }
 }
 
+spec fn holds<X>(x:X, f:spec_fn(X) -> bool) -> bool {
+    f(x)
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // General resources
@@ -306,7 +309,7 @@ struct ⟦mlist_ptsto⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool;
+spec fn ⟨mlist_ptsto⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool;
 
 
 #[verifier(external_body)]
@@ -316,7 +319,7 @@ struct ⟦mlist_ptsto_lb⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto_lb⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_lb⟧<K,T>) -> bool;
+spec fn ⟨mlist_ptsto_lb⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_lb⟧<K,T>) -> bool;
 
                  
 #[verifier(external_body)]
@@ -326,7 +329,53 @@ struct ⟦mlist_ptsto_ro⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_ro⟧<K,T>) -> bool;
+spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_ro⟧<K,T>) -> bool;
+
+
+#[verifier(external_body)]
+proof fn mlist_ptsto_lb_comparable<K,T>(
+    γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
+    Hlb1: ⟦mlist_ptsto_lb⟧<K,T>,
+    Hlb2: ⟦mlist_ptsto_lb⟧<K,T>,
+)
+requires
+  holds(Hlb1, ⟨mlist_ptsto_lb⟩(γ, k, l)),
+  holds(Hlb2, ⟨mlist_ptsto_lb⟩(γ, k, l_p)),
+ensures
+  l.is_prefix_of(l_p) || l_p.is_prefix_of(l)
+{
+    unimplemented!()
+}
+
+
+#[verifier(external_body)]
+proof fn mlist_ptsto_update<K,T>(
+    γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
+    Hptsto: ⟦mlist_ptsto⟧<K,T>,
+) -> (Hout:⟦mlist_ptsto⟧<K,T>)
+requires
+  l.is_prefix_of(l_p),
+  holds(Hptsto, ⟨mlist_ptsto⟩(γ, k, l)),
+ensures
+  holds(Hout, ⟨mlist_ptsto⟩(γ, k, l_p)),
+{
+    unimplemented!()
+}
+
+// XXX: a bit of cleverness here using the "&" to make it so the old resource
+// doesn't go away.
+#[verifier(external_body)]
+proof fn mlist_ptsto_get_lb<K,T>(
+    γ:gname, k:K, l:Seq<T>,
+    Hptsto: &⟦mlist_ptsto⟧<K,T>,
+) -> (Hout:⟦mlist_ptsto_lb⟧<K,T>)
+requires
+  holds(*Hptsto, ⟨mlist_ptsto⟩(γ, k, l)),
+ensures
+  holds(Hout, ⟨mlist_ptsto_lb⟩(γ, k, l)),
+{
+    unimplemented!()
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Paxos separation logic theory
@@ -432,11 +481,6 @@ spec fn ⟨is_accepted_upper_bound⟩(γsrv:mp_server_names, log:Seq<EntryType>,
 }
 
 
-// TODO: move to general part
-spec fn holds<X>(x:X, f:spec_fn(X) -> bool) -> bool {
-    f(x)
-}
-
 struct ⟦own_replica_ghost⟧ {
     Hprop_lb : ⟦is_proposal_lb⟧,
     Hprop_facts : ⟦is_proposal_facts⟧,
@@ -478,6 +522,41 @@ spec fn ⟨own_replica_ghost⟩(γsys:mp_system_names, γsrv:mp_server_names, st
             |e| ⟨own_vote_tok⟩(γsrv, e)
         ))
     }
+}
+
+proof fn ghost_replica_accept_same_epoch(
+    γsys:mp_system_names,
+    γsrv:mp_server_names,
+    st:MPaxosState,
+    epoch_p:u64,
+    log_p: Seq<EntryType>,
+    Hown: ⟦own_replica_ghost⟧,
+    Hprop_lb: ⟦is_proposal_lb⟧,
+    Hprop_facts: ⟦is_proposal_facts⟧,
+) ->
+(ret: ⟦own_replica_ghost⟧)
+  requires
+    st.epoch <= epoch_p,
+    st.accepted_epoch == epoch_p,
+    st.log.len() <= log_p.len(),
+    holds(Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
+    holds(Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch_p, log_p)),
+    holds(Hprop_facts, ⟨is_proposal_facts⟩(γsys, epoch_p, log_p)),
+  ensures
+    st.epoch == epoch_p,
+    ⟨own_replica_ghost⟩(γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
+{
+    let mut Hown = Hown;
+    // assert (st.epoch == epoch_p);
+    // assert (st.accepted_epoch == st.epoch);
+    mlist_ptsto_lb_comparable(γsys.proposal_gn, epoch_p, st.log, log_p,
+                               Hown.Hprop_lb, Hprop_lb);
+    // assert(st.log.is_prefix_of(log_p));
+    Hown.Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, st.log, log_p, Hown.Hacc);
+    Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
+    Hown.Hprop_lb = Hprop_lb;
+    Hown.Hprop_facts = Hprop_facts;
+    Hown
 }
 
 fn main() {}
