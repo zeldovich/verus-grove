@@ -147,7 +147,30 @@ impl Proposer {
 
 type True = ();
 type Pure = ();
-enum Or<A,B> {Left(A), Right(B)}
+
+/// P ∗ Q
+type ⟦sep⟧<⟦P⟧,⟦Q⟧> = (⟦P⟧, ⟦Q⟧);
+spec fn ⟨sep⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec_fn(⟦Q⟧) -> bool)
+    -> spec_fn(⟦sep⟧<⟦P⟧,⟦Q⟧>) -> bool {
+    |res:⟦sep⟧<_,_>| {
+        &&& ⟨P⟩(res.0)
+        &&& ⟨Q⟩(res.1)
+    }
+}
+
+
+/// P ∨ Q
+enum ⟦or⟧<A,B> {Left(A), Right(B)}
+spec fn ⟨or⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec_fn(⟦Q⟧) -> bool)
+    -> spec_fn(⟦or⟧<⟦P⟧,⟦Q⟧>) -> bool {
+    |res:⟦or⟧<⟦P⟧,⟦Q⟧>| {
+        match res {
+            ⟦or⟧::Left(res) => ⟨P⟩(res),
+            ⟦or⟧::Right(res) => ⟨Q⟩(res),
+        }
+    }
+}
+
 
 /// P -∗ Q
 trait wand_tr<P, Q> {
@@ -193,6 +216,7 @@ spec fn ⟨wand⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:sp
         &&& res.post() == ⟨Q⟩
     }
 }
+
 
 
 /// ∀ (x:X), A(x)   where A is a predicate.
@@ -333,17 +357,39 @@ spec fn ⟨big_sepS⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R�
 
 type EntryType = StateType;
 type ⟦is_proposal_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
-type ⟦is_proposal_facts⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>; // FIXME: wrong type
+spec fn ⟨is_proposal_lb⟩(γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>) ->
+    spec_fn(⟦is_proposal_lb⟧) -> bool
+{
+    ⟨mlist_ptsto_lb⟩(γsys.proposal_gn, epoch, σ)
+}
+
+// FIXME: wrong prop
+type ⟦is_proposal_facts⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>; 
+spec fn ⟨is_proposal_facts⟩(γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>) ->
+    spec_fn(⟦is_proposal_facts⟧) -> bool
+{
+    ⟨mlist_ptsto_lb⟩(γsys.proposal_gn, epoch, σ)
+}
+
 type ⟦is_accepted_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
+spec fn ⟨is_accepted_lb⟩(γsrv:mp_server_names, epoch:u64, σ:Seq<EntryType>) ->
+    spec_fn(⟦is_proposal_lb⟧) -> bool
+{
+    ⟨mlist_ptsto_lb⟩(γsrv.accepted_gn, epoch, σ)
+}
+
 type ⟦own_accepted⟧ = ⟦mlist_ptsto⟧<u64, EntryType>;
+spec fn ⟨own_accepted⟩(γsrv:mp_server_names, epoch:u64, σ:Seq<EntryType>) ->
+    spec_fn(⟦own_accepted⟧) -> bool
+{
+    ⟨mlist_ptsto⟩(γsrv.accepted_gn, epoch, σ)
+}
 
 type ⟦is_accepted_ro⟧ = ⟦mlist_ptsto_ro⟧<u64, EntryType>;
 spec fn ⟨is_accepted_ro⟩(γsrv:mp_server_names, epoch:u64, l:Seq<EntryType>) ->
-            spec_fn(⟦is_accepted_ro⟧) -> bool
+    spec_fn(⟦is_accepted_ro⟧) -> bool
 {
-    |res| {
-        ⟨mlist_ptsto_ro⟩(γsrv.accepted_gn, epoch, l)(res)
-    }
+    ⟨mlist_ptsto_ro⟩(γsrv.accepted_gn, epoch, l)
 }
 
 
@@ -354,34 +400,42 @@ spec fn ⟨own_vote_tok⟩(γsrv:mp_server_names, epoch:u64) -> spec_fn(⟦own_v
     }
 }
 
-type ⟦is_accepted_upper_bound⟧ = (
+type ⟦is_accepted_upper_bound⟧ =
+⟦sep⟧<Pure,
+  ⟦sep⟧<
     ⟦is_accepted_ro⟧,
     ⟦□⟧<⟦forall⟧<u64, ⟦wand⟧<Pure, ⟦wand⟧<Pure, ⟦is_accepted_ro⟧>>>>,
-);
+>>;
 closed spec fn logPrefixTrigger(logPrefix:Seq<EntryType>) -> bool {
     true
 }
 spec fn ⟨is_accepted_upper_bound⟩(γsrv:mp_server_names, log:Seq<EntryType>, acceptedEpoch:u64, newEpoch:u64)
                                   -> spec_fn(⟦is_accepted_upper_bound⟧) -> bool
 {
-    |res:⟦is_accepted_upper_bound⟧| {
+    |res| {
         exists |logPrefix:Seq<EntryType>| {
-            &&& #[trigger] logPrefixTrigger(logPrefix)
-            &&& logPrefix.is_prefix_of(log)
-            &&& ⟨is_accepted_ro⟩(γsrv, acceptedEpoch, logPrefix)(res.0)
-            &&& ⟨□⟩(
-                ⟨forall⟩(|epoch_p:u64| {
+        &&& #[trigger] logPrefixTrigger(logPrefix)
+        &&& ⟨sep⟩(
+        |_p| { logPrefix.is_prefix_of(log) },
+        ⟨sep⟩(
+        ⟨is_accepted_ro⟩(γsrv, acceptedEpoch, logPrefix),
+        ⟨□⟩(⟨forall⟩(|epoch_p:u64| {
+            ⟨wand⟩(
+                |_p| acceptedEpoch < epoch_p,
                 ⟨wand⟩(
-                    |_x| acceptedEpoch < epoch_p,
-                    ⟨wand⟩(
-                        |_x| epoch_p < newEpoch,
-                        ⟨is_accepted_ro⟩(γsrv, epoch_p, Seq::empty())
-                    )
-                )}))(res.1)
+                    |_x| epoch_p < newEpoch,
+                    ⟨is_accepted_ro⟩(γsrv, epoch_p, Seq::empty())
+                )
+            )}))))(res)
         }
     }
 }
 
+
+// TODO: move to general part
+spec fn holds<X>(x:X, f:spec_fn(X) -> bool) -> bool {
+    f(x)
+}
 
 struct ⟦own_replica_ghost⟧ {
     Hprop_lb : ⟦is_proposal_lb⟧,
@@ -389,10 +443,42 @@ struct ⟦own_replica_ghost⟧ {
     Hacc_lb : ⟦is_accepted_lb⟧,
     HepochIneq : Pure,
     Hacc : ⟦own_accepted⟧,
-    Hacc_ub : Or<True, ⟦is_accepted_upper_bound⟧>,
+    Hacc_ub : ⟦or⟧<Pure, ⟦is_accepted_upper_bound⟧>,
     Hunused : ⟦big_sepS⟧<u64, ⟦own_accepted⟧>,
     Hvotes : ⟦big_sepS⟧<u64, ⟦own_vote_tok⟧>,
 }
-    
+
+ghost struct MPaxosState {
+    epoch : u64,
+    accepted_epoch : u64,
+    log : Seq<EntryType>,
+}
+spec fn ⟨own_replica_ghost⟩(γsys:mp_system_names, γsrv:mp_server_names, st:MPaxosState) 
+    -> spec_fn(⟦own_replica_ghost⟧) -> bool {
+    |res:⟦own_replica_ghost⟧| {
+        holds(res.Hprop_lb, ⟨is_proposal_lb⟩(γsys, st.accepted_epoch, st.log)) &&
+        holds(res.Hprop_facts, ⟨is_proposal_facts⟩(γsys, st.accepted_epoch, st.log)) &&
+        holds(res.Hacc_lb, ⟨is_accepted_lb⟩(γsrv, st.accepted_epoch, st.log)) &&
+        holds(res.HepochIneq, |_p| st.accepted_epoch <= st.epoch) &&
+        holds(res.Hacc, ⟨own_accepted⟩(γsrv, st.epoch, if (st.accepted_epoch == st.epoch) {
+                    st.log
+                } else {
+                    Seq::empty()
+                })) &&
+        holds(res.Hacc_ub, ⟨or⟩(
+            |_p| !(st.accepted_epoch < st.epoch),
+            ⟨is_accepted_upper_bound⟩(γsrv, st.log, st.accepted_epoch, st.epoch)
+        )) &&
+        holds(res.Hunused, ⟨big_sepS⟩(
+            Set::new(|e:u64| e > st.epoch),
+            |e| ⟨own_accepted⟩(γsrv, e, Seq::empty())
+        )) &&
+        holds(res.Hvotes, ⟨big_sepS⟩(
+            Set::new(|e:u64| e > st.epoch),
+            |e| ⟨own_vote_tok⟩(γsrv, e)
+        ))
+    }
+}
+
 fn main() {}
 }

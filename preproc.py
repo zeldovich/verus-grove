@@ -13,6 +13,7 @@ def main():
               .replace("⟧", "_res")
               .replace("⟩", "_prop")
               .replace("γ", "gamma")
+              .replace("σ", "sigma")
               .replace("□", "intuitionistically")
               )
     print(output)
