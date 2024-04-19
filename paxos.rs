@@ -413,7 +413,7 @@ spec fn ⟨big_sepS⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R�
                            -> spec_fn(⟦big_sepS⟧<K, ⟦R⟧>) -> bool {
     |res:⟦big_sepS⟧<K, ⟦R⟧>| {
         &&& res.contents.dom() == s
-        &&& forall |k| #[trigger] s.contains(k) ==> ⟨R⟩(k)(res.contents[k])
+        &&& forall |k| s.contains(k) ==> ⟨R⟩(k)(#[trigger] res.contents[k])
     }
 }
 
@@ -636,12 +636,30 @@ proof fn ghost_replica_accept_new_epoch(
     ⟨own_replica_ghost⟩(γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
 {
     let tracked mut Hown = Hown;
+    let st_p = MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p};
     if st.epoch < epoch_p {
         let tracked mut Hacc = Hown.Hunused.contents.tracked_remove(epoch_p);
         Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, Seq::empty(), log_p, Hacc);
         let tracked Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hacc);
+        Hown.Hvotes.contents.tracked_remove(epoch_p);
+        Hown.Hvotes.contents.lemma_remove_equivalency(epoch_p);
+        assert(Hown.Hvotes.contents.dom() == Set::new(|e:u64| e > st_p.epoch));
+
+        Hown.Hacc = Hacc;
+        Hown.Hacc_lb = Hacc_lb;
+        Hown.Hprop_lb = Hprop_lb;
+        Hown.Hprop_facts = Hprop_facts;
+        Hown.Hacc_ub = ⟦or⟧::Left(());
+
+        let res = Hown;
+        /*
+        assert(
+        holds(res.Hvotes, ⟨big_sepS⟩(
+            Set::new(|e:u64| e > st_p.epoch),
+            |e| ⟨own_vote_tok⟩(γsrv, e)
+        ))); */
     } else if st.epoch == epoch_p {
-        
+        assume(false);
     } else {
         assert(false);
     }
