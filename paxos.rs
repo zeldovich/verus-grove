@@ -638,7 +638,6 @@ proof fn ghost_replica_accept_new_epoch(
     let tracked mut Hown = Hown;
     let st_p = MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p};
     if st.epoch < epoch_p {
-        let o = Hown.Hunused.contents;
         Hown.Hunused.contents.tracked_remove_keys(Set::new(|e:u64| st.epoch < e < st_p.epoch));
         let tracked mut Hacc = Hown.Hunused.contents.tracked_remove(epoch_p);
         Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, Seq::empty(), log_p, Hacc);
@@ -652,18 +651,15 @@ proof fn ghost_replica_accept_new_epoch(
         Hown.Hprop_facts = Hprop_facts;
         Hown.Hacc_ub = ⟦or⟧::Left(());
 
-
-        // TODO: Not sure what these asserts are triggering. But, need at least
-        // one of them to prove postcondition. Strangely, don't need both of
-        // them, but triggering the shared part doesn't seem enough.
-        assert(Hown.Hvotes.contents.dom() == Set::new(|e:u64| e > st_p.epoch));
-        // assert(Hown.Hunused.contents.dom() == Set::new(|e:u64| e > st_p.epoch));
-        // These do NOT work:
-        // assert(Hown.Hvotes.contents.dom() == Hown.Hvotes.contents.dom());
-        // assert(Hown.Hvotes.contents.dom() == Hown.Hunused.contents.dom());
-        // assert(Hown.Hvotes.contents.dom() == Hown.Hvotes.contents.dom() &&
-        //        Set::new(|e:u64| e > st_p.epoch) == Set::new(|e:u64| e > st_p.epoch));
-
+        // TODO: Not sure what this asserts are triggering. But, need at least
+        // one of them to prove the assert further on. 
+        assert(Hown.Hunused.contents.dom() == Set::new(|e:u64| e > st_p.epoch));
+        // assert(
+        // holds(Hown.Hunused, ⟨big_sepS⟩(
+        //     Set::new(|e:u64| e > st_p.epoch),
+        //     |e| ⟨own_accepted⟩(γsrv, e, Seq::empty())
+        // )) 
+        // );
     } else if st.epoch == epoch_p {
         assume(false);
     } else {
