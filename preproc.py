@@ -7,7 +7,14 @@ def main():
     with open(os.path.join(dir_path, "paxos.rs"), "r") as f:
         orig = f.read()
 
-    output = orig.replace("⟦", "").replace("⟨", "").replace("⟧", "_res").replace("⟩", "_prop").replace("γ", "gamma")
+    output = (orig
+              .replace("⟦", "")
+              .replace("⟨", "")
+              .replace("⟧", "_res")
+              .replace("⟩", "_prop")
+              .replace("γ", "gamma")
+              .replace("□", "intuitionistically")
+              )
     print(output)
 
 if __name__=="__main__":

@@ -146,35 +146,17 @@ impl Proposer {
 // General definitions
 
 type True = ();
+type Pure = ();
 enum Or<A,B> {Left(A), Right(B)}
 
-/// A type is an of class iProp if there's also a pure proposition associated
-/// with it.
-trait iProp {
-    spec fn pure(&self) -> bool;
-}
-
-struct Pure {
-    ghost prop:spec_fn() -> bool
-}
-impl iProp for Pure {
-    spec fn pure(&self) -> bool {
-        (self.prop)()
-    }
-}
-impl Pure {
-    proof fn new(P:spec_fn() -> bool) -> (r:Pure)
-        ensures P() <==> (r.prop)()
-    {
-        Pure { prop:P }
-    }
-}
-
 /// P -∗ Q
-trait wand_tr<P:iProp, Q:iProp> {
+trait wand_tr<P, Q> {
+    spec fn pre(&self) -> spec_fn(x:P) -> bool;
+    spec fn post(&self) -> spec_fn(x:Q) -> bool;
+
     proof fn instantiate(tracked self, i:P) -> (out:Q) where Self: std::marker::Sized
-        requires i.pure()
-        ensures out.pure()
+        requires self.pre()(i)
+        ensures self.post()(out)
         opens_invariants none
         ;
 }
@@ -183,41 +165,97 @@ trait wand_tr<P:iProp, Q:iProp> {
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(P)]
 #[verifier::reject_recursive_types(Q)]
-struct wand<P:iProp,Q:iProp> {
-    _phantom1 : std::marker::PhantomData<P>,
-    _phantom2 : std::marker::PhantomData<Q>,
+struct ⟦wand⟧<P,Q> {
+    _phantom : std::marker::PhantomData<(P,Q)>,
 }
-impl<P:iProp,Q:iProp> wand_tr<P,Q> for wand<P,Q> {
+impl<P, Q> wand_tr<P, Q> for ⟦wand⟧<P, Q> {
+    spec fn pre(&self) -> spec_fn(x:P) -> bool;
+    spec fn post(&self) -> spec_fn(x:Q) -> bool;
+
     #[verifier(external_body)]
     proof fn instantiate(tracked self, i:P) -> (out:Q) {
         unimplemented!();
     }
 }
-impl<P:iProp,Q:iProp> iProp for wand<P,Q> {
-    spec fn pure(&self) -> bool {
-        true
-    }
-}
-impl<P:iProp,Q:iProp> wand<P,Q> {
+impl<P, Q> ⟦wand⟧<P, Q> {
     #[verifier(external_body)]
-    fn from<T:wand_tr<P,Q>>(x:T) -> Self {
+    fn from<T:wand_tr<P,Q>>(x:T) -> (r:Self)
+        ensures r.pre() == x.pre(),
+        r.post() == x.post(),
+    {
         unimplemented!();
     }
 }
 
-trait iPred<X> {
-    spec fn pred(&self, x:X) -> bool;
-}
 
 /// ∀ (x:X), A(x)   where A is a predicate.
-trait forall_tr<X, Aout:iPred<X>> {
-    proof fn instantiate(self, x:X) -> (r:Aout) where Self: std::marker::Sized
-        ensures r.pred(x)
+trait forall_tr<X, ⟦A⟧> {
+    spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
+
+    proof fn instantiate(self, x:X) -> (out:⟦A⟧) where Self: std::marker::Sized
+        ensures self.post()(x)(out)
     ;
 }
 
 /// model for dyn forall_tr
-/// TODO
+#[verifier(external_body)]
+#[verifier::reject_recursive_types(X)]
+#[verifier::reject_recursive_types(⟦A⟧)]
+struct ⟦forall⟧<X,⟦A⟧> {
+    _phantom : std::marker::PhantomData<(X,⟦A⟧)>,
+}
+impl<X,⟦A⟧> forall_tr<X,⟦A⟧> for ⟦forall⟧<X,⟦A⟧> {
+    spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
+
+    #[verifier(external_body)]
+    proof fn instantiate(self, x:X) -> (out:⟦A⟧) where Self: std::marker::Sized {
+        unimplemented!();
+    }
+}
+spec fn ⟨forall⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool)
+    -> spec_fn(⟦forall⟧<X,⟦A⟧>) -> bool
+{
+    |res:⟦forall⟧<_,_>| {
+        res.post() == ⟨A⟩
+    }
+}
+
+
+/// □ P
+trait □_tr<⟦P⟧> {
+    spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool;
+
+    proof fn dup(&self) -> (out:⟦P⟧)
+        ensures self.post()(out)
+        opens_invariants none
+        ;
+}
+
+/// model for dyn □_tr
+#[verifier(external_body)]
+#[verifier::reject_recursive_types(⟦P⟧)]
+struct ⟦□⟧<⟦P⟧> {
+    _phantom : std::marker::PhantomData<(⟦P⟧)>,
+}
+impl<⟦P⟧> □_tr<⟦P⟧> for ⟦□⟧<⟦P⟧> {
+    spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool;
+
+    #[verifier(external_body)]
+    proof fn dup(&self) -> (out:⟦P⟧) {
+        unimplemented!();
+    }
+}
+// XXX:
+// Q: Should we take the ⟨P⟩ as input in the dup lemma, or should the lemma
+// extract it from the ⟦□⟧ object?
+// A: Can do best of both. Use the ⟨□⟩ style for stating, but the "extracting
+// via spec fn" style for lemma. So, having ⟦□⟧ impl the trait.
+spec fn ⟨□⟩<⟦P⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool) -> spec_fn(⟦□⟧<⟦P⟧>) -> bool {
+    |res:⟦□⟧<⟦P⟧>| {
+        res.post() == ⟨P⟩
+    }
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // General resources
@@ -227,9 +265,7 @@ type gname = nat;
 #[verifier(external_body)]
 struct ⟦tok_points_to⟧ {
 }
-impl iPred<(gname, u64)> for ⟦tok_points_to⟧ {
-    spec fn pred(&self, r:(gname, u64)) -> bool;
-}
+spec fn ⟨tok_points_to⟩(γ:gname, k:u64) -> spec_fn(⟦tok_points_to⟧) -> bool;
 
 
 #[verifier(external_body)]
@@ -249,7 +285,7 @@ struct ⟦mlist_ptsto_lb⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto_lb⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool;
+spec fn ⟨mlist_ptsto_lb⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_lb⟧<K,T>) -> bool;
 
                  
 #[verifier(external_body)]
@@ -259,7 +295,7 @@ struct ⟦mlist_ptsto_ro⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool;
+spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:u64, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_ro⟧<K,T>) -> bool;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Paxos separation logic theory
@@ -276,13 +312,14 @@ struct mp_server_names {
 
 
 #[verifier::reject_recursive_types(K)]
-struct ⟦big_sepS⟧<K, R:iPred<K>> {
-    contents: Map<K,R>
+struct ⟦big_sepS⟧<K, ⟦R⟧> {
+    contents: Map<K, ⟦R⟧>
 }
-impl<K, R:iPred<K>> iPred<Set<K>> for ⟦big_sepS⟧<K,R> {
-    spec fn pred(&self, s:Set<K>) -> bool {
-        &&& self.contents.dom() == s
-        &&& forall |k| #[trigger] s.contains(k) ==> (self.contents[k].pred(k))
+spec fn ⟨big_sepS⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R⟧) -> bool)
+                           -> spec_fn(⟦big_sepS⟧<K, ⟦R⟧>) -> bool {
+    |res:⟦big_sepS⟧<K, ⟦R⟧>| {
+        &&& res.contents.dom() == s
+        &&& forall |k| #[trigger] s.contains(k) ==> ⟨R⟩(k)(res.contents[k])
     }
 }
 
@@ -292,31 +329,60 @@ type ⟦is_proposal_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
 type ⟦is_proposal_facts⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>; // FIXME: wrong type
 type ⟦is_accepted_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
 type ⟦own_accepted⟧ = ⟦mlist_ptsto⟧<u64, EntryType>;
+
 type ⟦is_accepted_ro⟧ = ⟦mlist_ptsto_ro⟧<u64, EntryType>;
+spec fn ⟨is_accepted_ro⟩(γsrv:mp_server_names, epoch:u64, l:Seq<EntryType>) ->
+            spec_fn(⟦is_accepted_ro⟧) -> bool
+{
+    |res| {
+        ⟨mlist_ptsto_ro⟩(γsrv.accepted_gn, epoch, l)(res)
+    }
+}
 
 
 type ⟦own_vote_tok⟧ = ⟦tok_points_to⟧;
-impl iPred<(mp_server_names, u64)> for ⟦own_vote_tok⟧ {
-    spec fn pred(&self, r:(mp_server_names, u64)) -> bool {
-        let (γsrv, epoch) = r;
-        ⟦tok_points_to⟧::pred(self, (γsrv.vote_gn, epoch))
+spec fn ⟨own_vote_tok⟩(γsrv:mp_server_names, epoch:u64) -> spec_fn(⟦own_vote_tok⟧) -> bool {
+    |res| {
+        ⟨tok_points_to⟩(γsrv.vote_gn, epoch)(res)
     }
 }
 
 type ⟦is_accepted_upper_bound⟧ = (
     ⟦is_accepted_ro⟧,
-    // □(dyn_Atomic_update)
+    ⟦□⟧<⟦forall⟧<u64, ⟦wand⟧<Pure, ⟦wand⟧<Pure, ⟦is_accepted_ro⟧>>>>,
 );
+closed spec fn logPrefixTrigger(logPrefix:Seq<EntryType>) -> bool {
+    true
+}
+spec fn ⟨is_accepted_upper_bound⟩(γsrv:mp_server_names, log:Seq<EntryType>, acceptedEpoch:u64, newEpoch:u64)
+                                  -> spec_fn(⟦is_accepted_upper_bound⟧) -> bool
+{
+    |res:⟦is_accepted_upper_bound⟧| {
+        exists |logPrefix:Seq<EntryType>| {
+            &&& #[trigger] logPrefixTrigger(logPrefix)
+            &&& logPrefix.is_prefix_of(log)
+            &&& ⟨is_accepted_ro⟩(γsrv, acceptedEpoch, logPrefix)(res.0)
+            &&& ⟨□⟩(
+                ⟨forall⟩(
+                |x:X| { |r| {
+                        true
+                    }
+                }
+                )
+                )(res.1)
+        }
+    }
+}
 
 
 struct ⟦own_replica_ghost⟧ {
     Hprop_lb : ⟦is_proposal_lb⟧,
     Hprop_facts : ⟦is_proposal_facts⟧,
     Hacc_lb : ⟦is_accepted_lb⟧,
-    HepochIneq : (), // pure
+    HepochIneq : Pure,
     Hacc : ⟦own_accepted⟧,
     Hacc_ub : Or<True, ⟦is_accepted_upper_bound⟧>,
-    Hunused : ⟦big_sepS⟧<u64, ⟦own_accepted⟧>, // FIXME: this is now broken
+    Hunused : ⟦big_sepS⟧<u64, ⟦own_accepted⟧>,
     Hvotes : ⟦big_sepS⟧<u64, ⟦own_vote_tok⟧>,
 }
     
