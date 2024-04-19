@@ -335,12 +335,12 @@ spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist
 #[verifier(external_body)]
 proof fn mlist_ptsto_lb_comparable<K,T>(
     γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
-    Hlb1: ⟦mlist_ptsto_lb⟧<K,T>,
-    Hlb2: ⟦mlist_ptsto_lb⟧<K,T>,
+    Hlb1: &⟦mlist_ptsto_lb⟧<K,T>,
+    Hlb2: &⟦mlist_ptsto_lb⟧<K,T>,
 )
 requires
-  holds(Hlb1, ⟨mlist_ptsto_lb⟩(γ, k, l)),
-  holds(Hlb2, ⟨mlist_ptsto_lb⟩(γ, k, l_p)),
+  holds(*Hlb1, ⟨mlist_ptsto_lb⟩(γ, k, l)),
+  holds(*Hlb2, ⟨mlist_ptsto_lb⟩(γ, k, l_p)),
 ensures
   l.is_prefix_of(l_p) || l_p.is_prefix_of(l)
 {
@@ -373,6 +373,20 @@ requires
   holds(*Hptsto, ⟨mlist_ptsto⟩(γ, k, l)),
 ensures
   holds(Hout, ⟨mlist_ptsto_lb⟩(γ, k, l)),
+{
+    unimplemented!()
+}
+
+#[verifier(external_body)]
+proof fn mlist_ptsto_lb_mono<K,T>(
+    γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
+    Hptsto: &⟦mlist_ptsto_lb⟧<K,T>,
+) -> (Hout:⟦mlist_ptsto_lb⟧<K,T>)
+requires
+  l_p.is_prefix_of(l),
+  holds(*Hptsto, ⟨mlist_ptsto_lb⟩(γ, k, l)),
+ensures
+  holds(Hout, ⟨mlist_ptsto_lb⟩(γ, k, l_p)),
 {
     unimplemented!()
 }
@@ -524,6 +538,20 @@ spec fn ⟨own_replica_ghost⟩(γsys:mp_system_names, γsrv:mp_server_names, st
     }
 }
 
+proof fn ghost_replica_get_lb(
+    γsys:mp_system_names,
+    γsrv:mp_server_names,
+    st:MPaxosState,
+    Hown: &⟦own_replica_ghost⟧,
+) ->
+(ret: ⟦is_accepted_lb⟧)
+  requires holds(*Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
+  ensures
+    ⟨is_accepted_lb⟩(γsrv, st.accepted_epoch, st.log)(ret)
+{
+    mlist_ptsto_lb_mono(γsrv.accepted_gn, st.accepted_epoch, st.log, st.log, &Hown.Hacc_lb)
+}
+
 proof fn ghost_replica_accept_same_epoch(
     γsys:mp_system_names,
     γsrv:mp_server_names,
@@ -550,13 +578,39 @@ proof fn ghost_replica_accept_same_epoch(
     // assert (st.epoch == epoch_p);
     // assert (st.accepted_epoch == st.epoch);
     mlist_ptsto_lb_comparable(γsys.proposal_gn, epoch_p, st.log, log_p,
-                               Hown.Hprop_lb, Hprop_lb);
+                               &Hown.Hprop_lb, &Hprop_lb);
     // assert(st.log.is_prefix_of(log_p));
     Hown.Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, st.log, log_p, Hown.Hacc);
     Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
     Hown.Hprop_lb = Hprop_lb;
     Hown.Hprop_facts = Hprop_facts;
     Hown
+}
+
+proof fn ghost_replica_accept_same_epoch_old(
+    γsys:mp_system_names,
+    γsrv:mp_server_names,
+    st:MPaxosState,
+    epoch_p:u64,
+    log_p: Seq<EntryType>,
+    Hown: &⟦own_replica_ghost⟧,
+    Hprop_lb: &⟦is_proposal_lb⟧,
+    Hprop_facts: &⟦is_proposal_facts⟧,
+) ->
+(ret: ⟦is_accepted_lb⟧)
+  requires
+    st.epoch <= epoch_p,
+    st.accepted_epoch == epoch_p,
+    log_p.len() <= st.log.len(),
+    holds(*Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
+    holds(*Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch_p, log_p)),
+    holds(*Hprop_facts, ⟨is_proposal_facts⟩(γsys, epoch_p, log_p)),
+  ensures
+    ⟨is_accepted_lb⟩(γsrv, epoch_p, log_p)(ret)
+{
+    mlist_ptsto_lb_comparable(γsys.proposal_gn, epoch_p, st.log, log_p,
+                               &Hown.Hprop_lb, &Hprop_lb);
+    mlist_ptsto_lb_mono(γsrv.accepted_gn, st.accepted_epoch, st.log, log_p, &Hown.Hacc_lb)
 }
 
 fn main() {}
