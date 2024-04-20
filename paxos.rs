@@ -289,8 +289,15 @@ spec fn ⟨□⟩<⟦P⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool) -> spec_fn(⟦□�
 
 type Name = u64;
 type Namespace = Set<Name>;
+#[verifier(external_body)]
+struct inv_mask {}
+impl View for inv_mask {
+    type V = Namespace;
+    spec fn view(&self) -> Namespace;
+}
 
-/// fupd
+/// model for dyn fupd_tr; TODO: don't even have the fupd_tr right now, because
+/// we might not need it.
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(⟦P⟧)]
 struct ⟦fupd⟧<⟦P⟧> {
@@ -303,12 +310,6 @@ spec fn ⟨fupd⟩<⟦P⟧>(Eo:Namespace, Ei:Namespace, ⟨P⟩:spec_fn(⟦P⟧)
         res.get_Eo() == Eo &&
         res.get_Ei() == Ei
     }
-}
-#[verifier(external_body)]
-struct inv_mask {}
-impl View for inv_mask {
-    type V = Namespace;
-    spec fn view(&self) -> Namespace;
 }
 impl<⟦P⟧> ⟦fupd⟧<⟦P⟧> {
     spec fn get_Eo(&self) -> Namespace;
@@ -357,13 +358,6 @@ proof fn alloc_inv<⟦P⟧>(tracked E:&inv_mask, N:Name, ⟨P⟩:spec_fn(⟦P⟧
     unimplemented!()
 }
 
-    #[verifier(external_body)]
-    proof fn false_to_anything<A>() -> (tracked r:A)
-        requires false
-    {
-        unimplemented!();
-    }
-
 
 type ⟦inv_closer⟧<⟦P⟧> = ⟦wand⟧<⟦P⟧, ⟦fupd⟧<True>>;
 spec fn ⟨inv_closer⟩<⟦P⟧>(E:Namespace, N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
@@ -375,7 +369,7 @@ spec fn ⟨inv_closer⟩<⟦P⟧>(E:Namespace, N:Name, ⟨P⟩:spec_fn(⟦P⟧) 
 proof fn inv_open<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool,
                        tracked E:&mut inv_mask,
                        tracked Hi:⟦inv⟧<⟦P⟧>, tracked Hlc:⟦£⟧)
-    -> (r:(⟦P⟧, ⟦inv_closer⟧<⟦P⟧>))
+    -> (tracked r:(⟦P⟧, ⟦inv_closer⟧<⟦P⟧>))
     requires old(E)@.contains(N),
             holds(Hlc, ⟨£⟩(1)),
             holds(Hi, ⟨inv⟩(N, ⟨P⟩))
@@ -602,6 +596,7 @@ type Config = Set<mp_server_names>;
 struct ⟦is_committed_by⟧ {
     Hacc_lbs : ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_lb⟧>
 }
+#[verifier::opaque]
 spec fn W_trigger(W:Set<mp_server_names>) -> bool { true }
 spec fn ⟨is_committed_by⟩(config:Config, epoch:u64, σ:Seq<EntryType>)
     -> spec_fn(⟦is_committed_by⟧) -> bool
@@ -670,6 +665,7 @@ type ⟦is_accepted_upper_bound⟧ =
     ⟦is_accepted_ro⟧,
     ⟦□⟧<⟦forall⟧<u64, ⟦wand⟧<Pure, ⟦wand⟧<Pure, ⟦is_accepted_ro⟧>>>>,
 >>;
+#[verifier::opaque]
 closed spec fn logPrefixTrigger(logPrefix:Seq<EntryType>) -> bool {
     true
 }
@@ -874,6 +870,7 @@ struct ⟦is_repl_inv_inner⟧ {
     Hprop_facts: ⟦is_proposal_facts⟧,
 }
 const replN : Name = 1u64;
+#[verifier(opaque)]
 spec fn repl_inv_trigger(σ:Seq<EntryType>, epoch:u64) -> bool { true }
 spec fn ⟨is_repl_inv_inner⟩(config:Set<mp_server_names>, γsys:mp_system_names)
     -> spec_fn(⟦is_repl_inv_inner⟧) -> bool
@@ -894,6 +891,38 @@ spec fn ⟨is_repl_inv⟩(config:Set<mp_server_names>, γsys:mp_system_names)
     -> spec_fn(⟦is_repl_inv⟧) -> bool
 {
     ⟨inv⟩(replN, ⟨is_repl_inv_inner⟩(config, γsys))
+}
+
+proof fn ghost_commit(
+    tracked E:&mut inv_mask,
+    config:Config,
+    γsys:mp_system_names,
+    epoch:u64,
+    σ: Seq<EntryType>,
+    tracked Hlc: ⟦£⟧,
+    tracked Hinv: ⟦is_repl_inv⟧,
+    tracked Hcom: ⟦is_committed_by⟧,
+    tracked Hprop_lb: ⟦is_proposal_lb⟧,
+    tracked Hprop_facts: ⟦is_proposal_facts⟧,
+) ->
+(tracked ret: ⟦is_commit_lb⟧)
+  requires
+    old(E)@ =~= Set::new(|_p| true),
+    holds(Hlc, ⟨£⟩(1)),
+    holds(Hinv, ⟨is_repl_inv⟩(config, γsys)),
+    holds(Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch, σ)),
+    holds(Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch, σ)),
+  ensures
+    ⟨is_commit_lb⟩(γsys, σ)(ret),
+    E@ == old(E)@,
+{
+    // open invariant
+    let tracked (mut Hown, Hclose) = inv_open(replN, ⟨is_repl_inv_inner⟩(config, γsys),
+             E, Hinv, Hlc);
+    let (σcommit, epoch_commit) : (Seq<_>, u64) =
+        choose|σ:Seq<_>,epoch:u64| repl_inv_trigger(σ, epoch);
+    mlist_ptsto_get_lb(γsys.state_gn, 0, σcommit, &Hown.Hcommit)
+    // Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
 }
 
 fn main() {}
