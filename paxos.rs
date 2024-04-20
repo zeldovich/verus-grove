@@ -275,6 +275,19 @@ impl<X,⟦A⟧> exists_tr<X,⟦A⟧> for ⟦∃⟧<X,⟦A⟧> {
         unimplemented!();
     }
 }
+impl<X,⟦A⟧> ⟦∃⟧<X,⟦A⟧> {
+    // This statement makes it so that when the returned value is ever asserted
+    // to satisfy ⟨∃⟩, the forall will reduce it to something that must be true
+    // about x and HA.
+    #[verifier(external_body)]
+    proof fn exists(x:X, tracked HA:⟦A⟧) -> (tracked r:Self)
+      ensures
+        forall |⟨A⟩:spec_fn(X) -> spec_fn(⟦A⟧) -> bool|
+            ⟨A⟩(x)(HA) ==> #[trigger] ⟨∃⟩(⟨A⟩)(r)
+    {
+        unimplemented!();
+    }
+}
 spec fn ⟨∃⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool)
     -> spec_fn(⟦∃⟧<X,⟦A⟧>) -> bool
 {
@@ -319,7 +332,7 @@ spec fn ⟨□⟩<⟦P⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool) -> spec_fn(⟦□�
 }
 
 
-type Name = u64;
+type Name = nat;
 type Namespace = Set<Name>;
 #[verifier(external_body)]
 struct inv_mask {}
@@ -339,8 +352,8 @@ spec fn ⟨fupd⟩<⟦P⟧>(Eo:Namespace, Ei:Namespace, ⟨P⟩:spec_fn(⟦P⟧)
     -> spec_fn(⟦fupd⟧<⟦P⟧>) -> bool {
     |res:⟦fupd⟧<⟦P⟧>| {
         res.post() == ⟨P⟩ &&
-        res.get_Eo() == Eo &&
-        res.get_Ei() == Ei
+        res.get_Eo() =~= Eo &&
+        res.get_Ei() =~= Ei
     }
 }
 impl<⟦P⟧> ⟦fupd⟧<⟦P⟧> {
@@ -475,6 +488,16 @@ spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist
 
 
 #[verifier(external_body)]
+#[verifier::reject_recursive_types(K)]
+#[verifier::reject_recursive_types(T)]
+struct ⟦mlist_ptsto_half⟧<K,T> {
+    _phantom1 : std::marker::PhantomData<K>,
+    _phantom2 : std::marker::PhantomData<T>,
+}
+spec fn ⟨mlist_ptsto_half⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_half⟧<K,T>) -> bool;
+
+
+#[verifier(external_body)]
 proof fn mlist_ptsto_lb_comparable<K,T>(
     γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
     tracked Hlb1: &⟦mlist_ptsto_lb⟧<K,T>,
@@ -533,6 +556,49 @@ ensures
     unimplemented!()
 }
 
+#[verifier(external_body)]
+proof fn mlist_ptsto_half_combine<K,T>(
+    γ:gname, k:K, l1:Seq<T>, l2:Seq<T>,
+    tracked Hptsto1: ⟦mlist_ptsto_half⟧<K,T>,
+    tracked Hptsto2: ⟦mlist_ptsto_half⟧<K,T>,
+) -> (tracked Hptsto:⟦mlist_ptsto⟧<K,T>)
+requires
+  holds(Hptsto1, ⟨mlist_ptsto_half⟩(γ, k, l1)),
+  holds(Hptsto2, ⟨mlist_ptsto_half⟩(γ, k, l2)),
+ensures
+  l1 == l2,
+  holds(Hptsto, ⟨mlist_ptsto⟩(γ, k, l1)),
+{
+    unimplemented!()
+}
+
+#[verifier(external_body)]
+proof fn mlist_ptsto_half_split<K,T>(
+    γ:gname, k:K, l:Seq<T>,
+    tracked Hptsto: ⟦mlist_ptsto⟧<K,T>,
+) -> (tracked Hptstos:(⟦mlist_ptsto_half⟧<K,T>, ⟦mlist_ptsto_half⟧<K,T>))
+requires
+  holds(Hptsto, ⟨mlist_ptsto⟩(γ, k, l)),
+ensures
+  holds(Hptstos.0, ⟨mlist_ptsto_half⟩(γ, k, l)),
+  holds(Hptstos.1, ⟨mlist_ptsto_half⟩(γ, k, l)),
+{
+    unimplemented!()
+}
+
+#[verifier(external_body)]
+proof fn mlist_ptsto_half_get_lb<K,T>(
+    γ:gname, k:K, l:Seq<T>,
+    tracked Hptsto: &⟦mlist_ptsto_half⟧<K,T>,
+) -> (tracked Hout:⟦mlist_ptsto_lb⟧<K,T>)
+requires
+  holds(*Hptsto, ⟨mlist_ptsto_half⟩(γ, k, l)),
+ensures
+  holds(Hout, ⟨mlist_ptsto_lb⟩(γ, k, l)),
+{
+    unimplemented!()
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Paxos separation logic theory
 
@@ -558,7 +624,6 @@ spec fn ⟨[∗ set]⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R
         &&& forall |k| s.contains(k) ==> ⟨R⟩(k)(#[trigger] res.contents[k])
     }
 }
-
 
 type EntryType = StateType;
 
@@ -607,12 +672,12 @@ spec fn ⟨is_accepted_ro⟩(γsrv:mp_server_names, epoch:u64, l:Seq<EntryType>)
 }
 
 
-// own_commit is a mlist_ptsto with key 0
-type ⟦own_commit⟧ = ⟦mlist_ptsto⟧<u64, EntryType>;
+// own_commit is half ownership of a mlist_ptsto with key 0
+type ⟦own_commit⟧ = ⟦mlist_ptsto_half⟧<u64, EntryType>;
 spec fn ⟨own_commit⟩(γsys:mp_system_names, σ:Seq<EntryType>) ->
     spec_fn(⟦own_commit⟧) -> bool
 {
-    ⟨mlist_ptsto⟩(γsys.state_gn, 0, σ)
+    ⟨mlist_ptsto_half⟩(γsys.state_gn, 0, σ)
 }
 
 type ⟦is_commit_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
@@ -666,16 +731,20 @@ spec fn ⟨old_proposal_max⟩(config:Set<mp_server_names>, γsys:mp_system_name
     )
 }
 
+spec const ⊤ : Namespace = Set::new(|_p| true);
+spec const replN : Name = 1;
 // FIXME: need fupd_wand here
 type ⟦is_proposal_valid⟧ =
 ⟦□⟧<⟦∀⟧<Seq<EntryType>,
-        ⟦wand⟧<Pure, ⟦wand⟧<⟦own_commit⟧, ⟦own_commit⟧>>
+        ⟦wand⟧<Pure, ⟦wand⟧<⟦own_commit⟧, ⟦fupd⟧<⟦own_commit⟧>>>
 >>;
 spec fn ⟨is_proposal_valid⟩(γsys:mp_system_names, σ:Seq<EntryType>)
     -> spec_fn(⟦is_proposal_valid⟧) -> bool {
     ⟨□⟩(
     ⟨∀⟩(|σ_p:Seq<EntryType>| {
-      ⟨wand⟩(|_p| σ_p.is_prefix_of(σ), ⟨wand⟩(⟨own_commit⟩(γsys, σ_p), ⟨own_commit⟩(γsys, σ)))
+      ⟨wand⟩(|_p| σ_p.is_prefix_of(σ),
+             ⟨wand⟩(⟨own_commit⟩(γsys, σ_p),
+                    ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨own_commit⟩(γsys, σ))))
     })
     )
 }
@@ -895,14 +964,13 @@ proof fn ghost_replica_accept_new_epoch(
 }
 
 /// Replication invariant.
-struct ⟦is_repl_inv_inner_ex⟧ {
+tracked struct ⟦is_repl_inv_inner_ex⟧ {
     Hcommit : ⟦own_commit⟧,
     Hcommit_by: ⟦is_committed_by⟧,
     Hprop_lb: ⟦is_proposal_lb⟧,
     Hprop_facts: ⟦is_proposal_facts⟧,
 }
 type ⟦is_repl_inv_inner⟧ = ⟦∃⟧<(Seq<EntryType>, u64), ⟦is_repl_inv_inner_ex⟧>;
-const replN : Name = 1u64;
 spec fn ⟨is_repl_inv_inner⟩(config:Set<mp_server_names>, γsys:mp_system_names)
     -> spec_fn(⟦is_repl_inv_inner⟧) -> bool
 {
@@ -912,7 +980,7 @@ spec fn ⟨is_repl_inv_inner⟩(config:Set<mp_server_names>, γsys:mp_system_nam
     let epoch = f.1;
     |res:⟦is_repl_inv_inner_ex⟧| {
         holds(res.Hcommit, ⟨own_commit⟩(γsys, σ)) &&
-        holds(res.Hcommit_by, ⟨is_committed_by⟩(config, epoch, σ)) &&
+        holds(res.Hcommit_by, ⟨is_committed_by⟩(config, epoch, σ)) &&
         holds(res.Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch, σ)) &&
         holds(res.Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch, σ))
     }
@@ -925,6 +993,13 @@ spec fn ⟨is_repl_inv⟩(config:Set<mp_server_names>, γsys:mp_system_names)
     -> spec_fn(⟦is_repl_inv⟧) -> bool
 {
     ⟨inv⟩(replN, ⟨is_repl_inv_inner⟩(config, γsys))
+}
+
+#[verifier(external_body)]
+proof fn false_to_anything<A>() -> (tracked r:A)
+    requires false
+{
+    unimplemented!();
 }
 
 proof fn ghost_commit(
@@ -944,6 +1019,7 @@ proof fn ghost_commit(
     old(E)@ =~= Set::new(|_p| true),
     holds(Hlc, ⟨£⟩(1)),
     holds(Hinv, ⟨is_repl_inv⟩(config, γsys)),
+    holds(Hcom, ⟨is_committed_by⟩(config, epoch, σ)),
     holds(Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch, σ)),
     holds(Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch, σ)),
   ensures
@@ -955,8 +1031,56 @@ proof fn ghost_commit(
              E, Hinv, Hlc);
     let tracked (Ghost(f), Hown) = Hown.destruct();
     let (σcommit, epoch_commit) : (Seq<_>, u64) = f;
-    mlist_ptsto_get_lb(γsys.state_gn, 0, σcommit, &Hown.Hcommit)
-    // Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
+
+    {
+        if epoch < epoch_commit {
+            Hown.Hprop_facts.0.dup().instantiate((epoch, σ))
+            .instantiate(())
+            .instantiate(Hcom);
+            assert(σ.is_prefix_of(σcommit)); // right
+        }
+        assert(σcommit.is_prefix_of(σ) || σ.is_prefix_of(σcommit));
+    }
+
+    /* BUG: Verus thinks y is spec mode
+    assert(σcommit.is_prefix_of(σ) || σ.is_prefix_of(σcommit)) by {
+        if epoch < epoch_commit {
+            let tracked y = Hown.Hprop_facts.0.dup();
+            let tracked x = y.instantiate((epoch, σ));
+        }
+    }*/
+
+    if σcommit.is_prefix_of(σ) {
+        // update commit using is_prop_valid
+        let tracked mut Hown = Hown; // XXX: due to Verus unsupported 
+        let tracked Hprop_valid = Hprop_facts.1.dup();
+        let tracked Hcommit = Hprop_valid.instantiate(σcommit).
+            instantiate(()).
+            instantiate(Hown.Hcommit).
+            elim(E);
+        let tracked Hlb = mlist_ptsto_half_get_lb(γsys.state_gn, 0, σ, &Hcommit);
+
+        // close invariant
+        Hown.Hcommit = Hcommit;
+        Hown.Hprop_lb = Hprop_lb;
+        Hown.Hprop_facts = Hprop_facts;
+        Hown.Hcommit_by = Hcom;
+        let tracked Hown = ⟦∃⟧::exists((σ, epoch), Hown);
+        inv_close(replN, ⟨is_repl_inv_inner⟩(config, γsys), E, Hown, Hclose);
+
+        return Hlb;
+    } else if σ.is_prefix_of(σcommit) {
+        // get lb from σcommit
+        let tracked Hlb = mlist_ptsto_half_get_lb(γsys.state_gn, 0, σcommit, &Hown.Hcommit);
+        let tracked Hlb = mlist_ptsto_lb_mono(γsys.state_gn, 0, σcommit, σ, &Hlb);
+        // close invariant
+        let tracked Hown = ⟦∃⟧::exists((σcommit, epoch_commit), Hown);
+        inv_close(replN, ⟨is_repl_inv_inner⟩(config, γsys), E, Hown, Hclose);
+        return Hlb;
+    } else {
+        assert(false);
+        return false_to_anything();
+    }
 }
 
 fn main() {}

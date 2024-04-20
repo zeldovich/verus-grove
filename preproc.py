@@ -20,6 +20,7 @@ def main():
               .replace("£", "lc")
               .replace("[∗ set]", "big_sepS")
               .replace("∗", "sep")
+              .replace("⊤", "top_mask")
               )
     print(output)
 
