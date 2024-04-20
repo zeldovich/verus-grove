@@ -16,6 +16,7 @@ def main():
               .replace("σ", "sigma")
               .replace("□", "intuitionistically")
               .replace("∀", "forall")
+              .replace("∃", "exists")
               .replace("£", "lc")
               .replace("[∗ set]", "big_sepS")
               .replace("∗", "sep")

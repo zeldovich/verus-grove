@@ -251,6 +251,31 @@ spec fn ⟨∀⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> boo
     }
 }
 
+/// ∃ x, A(x)
+#[verifier::reject_recursive_types(X)]
+#[verifier::reject_recursive_types(⟦A⟧)]
+tracked struct ⟦∃⟧<X,⟦A⟧> {
+    ghost x:X,
+    ghost f:spec_fn(X) -> spec_fn(⟦A⟧) -> bool,
+    Ha: ⟦A⟧
+}
+spec fn ⟨∃⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool)
+    -> spec_fn(⟦∃⟧<X,⟦A⟧>) -> bool
+{
+    |res:⟦∃⟧<_,_>| {
+        res.f == ⟨A⟩ &&
+        ⟨A⟩(res.x)(res.Ha)
+    }
+}
+impl<X,⟦A⟧> ⟦∃⟧<X,⟦A⟧> {
+    proof fn destruct(tracked self) -> (tracked ret:(Ghost<X>, ⟦A⟧))
+        ensures
+          (self.f)(ret.0@)(ret.1)
+    {
+        return (Ghost(self.x), self.Ha);
+    }
+}
+
 
 /// □ P
 trait □_tr<⟦P⟧> {
@@ -863,27 +888,29 @@ proof fn ghost_replica_accept_new_epoch(
 }
 
 /// Replication invariant.
-struct ⟦is_repl_inv_inner⟧ {
+struct ⟦is_repl_inv_inner_ex⟧ {
     Hcommit : ⟦own_commit⟧,
     Hcommit_by: ⟦is_committed_by⟧,
     Hprop_lb: ⟦is_proposal_lb⟧,
     Hprop_facts: ⟦is_proposal_facts⟧,
 }
+type ⟦is_repl_inv_inner⟧ = ⟦∃⟧<(Seq<EntryType>, u64), ⟦is_repl_inv_inner_ex⟧>;
 const replN : Name = 1u64;
-#[verifier(opaque)]
-spec fn repl_inv_trigger(σ:Seq<EntryType>, epoch:u64) -> bool { true }
 spec fn ⟨is_repl_inv_inner⟩(config:Set<mp_server_names>, γsys:mp_system_names)
     -> spec_fn(⟦is_repl_inv_inner⟧) -> bool
 {
-    |res:⟦is_repl_inv_inner⟧| {
-        exists |σ, epoch| {
-            #[trigger] repl_inv_trigger(σ, epoch) &&
-            holds(res.Hcommit, ⟨own_commit⟩(γsys, σ)) &&
-            holds(res.Hcommit_by, ⟨is_committed_by⟩(config, epoch, σ)) &&
-            holds(res.Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch, σ)) &&
-            holds(res.Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch, σ))
-        }
+    ⟨∃⟩(
+    |f:(Seq<_>, u64)| {
+    let σ = f.0;
+    let epoch = f.1;
+    |res:⟦is_repl_inv_inner_ex⟧| {
+        holds(res.Hcommit, ⟨own_commit⟩(γsys, σ)) &&
+        holds(res.Hcommit_by, ⟨is_committed_by⟩(config, epoch, σ)) &&
+        holds(res.Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch, σ)) &&
+        holds(res.Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch, σ))
     }
+    }
+    )
 }
 
 type ⟦is_repl_inv⟧ = ⟦inv⟧<⟦is_repl_inv_inner⟧>;
@@ -919,8 +946,8 @@ proof fn ghost_commit(
     // open invariant
     let tracked (mut Hown, Hclose) = inv_open(replN, ⟨is_repl_inv_inner⟩(config, γsys),
              E, Hinv, Hlc);
-    let (σcommit, epoch_commit) : (Seq<_>, u64) =
-        choose|σ:Seq<_>,epoch:u64| repl_inv_trigger(σ, epoch);
+    let tracked (Ghost(f), Hown) = Hown.destruct();
+    let (σcommit, epoch_commit) : (Seq<_>, u64) = f;
     mlist_ptsto_get_lb(γsys.state_gn, 0, σcommit, &Hown.Hcommit)
     // Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
 }
