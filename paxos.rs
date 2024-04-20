@@ -412,7 +412,7 @@ struct ⟦big_sepS⟧<K, ⟦R⟧> {
 spec fn ⟨big_sepS⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R⟧) -> bool)
                            -> spec_fn(⟦big_sepS⟧<K, ⟦R⟧>) -> bool {
     |res:⟦big_sepS⟧<K, ⟦R⟧>| {
-        &&& res.contents.dom() == s
+        &&& res.contents.dom() =~= s
         &&& forall |k| s.contains(k) ==> ⟨R⟩(k)(#[trigger] res.contents[k])
     }
 }
@@ -650,16 +650,6 @@ proof fn ghost_replica_accept_new_epoch(
         Hown.Hprop_lb = Hprop_lb;
         Hown.Hprop_facts = Hprop_facts;
         Hown.Hacc_ub = ⟦or⟧::Left(());
-
-        // TODO: Not sure what this asserts are triggering. But, need at least
-        // one of them to prove the assert further on. 
-        assert(Hown.Hunused.contents.dom() == Set::new(|e:u64| e > st_p.epoch));
-        // assert(
-        // holds(Hown.Hunused, ⟨big_sepS⟩(
-        //     Set::new(|e:u64| e > st_p.epoch),
-        //     |e| ⟨own_accepted⟩(γsrv, e, Seq::empty())
-        // )) 
-        // );
     } else if st.epoch == epoch_p {
         assume(false);
     } else {
