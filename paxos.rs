@@ -637,25 +637,29 @@ proof fn ghost_replica_accept_new_epoch(
 {
     let tracked mut Hown = Hown;
     let st_p = MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p};
+    Hown.Hprop_lb = Hprop_lb;
+    Hown.Hprop_facts = Hprop_facts;
+    Hown.Hacc_ub = ⟦or⟧::Left(());
     if st.epoch < epoch_p {
         Hown.Hunused.contents.tracked_remove_keys(Set::new(|e:u64| st.epoch < e < st_p.epoch));
         let tracked mut Hacc = Hown.Hunused.contents.tracked_remove(epoch_p);
         Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, Seq::empty(), log_p, Hacc);
         let tracked Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hacc);
-
         Hown.Hvotes.contents.tracked_remove_keys(Set::new(|e:u64| st.epoch < e < st_p.epoch));
         Hown.Hvotes.contents.tracked_remove(st_p.epoch);
         Hown.Hacc = Hacc;
         Hown.Hacc_lb = Hacc_lb;
-        Hown.Hprop_lb = Hprop_lb;
-        Hown.Hprop_facts = Hprop_facts;
-        Hown.Hacc_ub = ⟦or⟧::Left(());
+        return Hown;
     } else if st.epoch == epoch_p {
-        assume(false);
+        let tracked mut Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, Seq::empty(), log_p, Hown.Hacc);
+        let tracked Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hacc);
+        Hown.Hacc = Hacc;
+        Hown.Hacc_lb = Hacc_lb;
+        return Hown;
     } else {
         assert(false);
+        return Hown;
     }
-    Hown
 }
 
 fn main() {}
