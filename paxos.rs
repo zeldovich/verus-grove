@@ -239,7 +239,7 @@ impl<X,⟦A⟧> forall_tr<X,⟦A⟧> for ⟦∀⟧<X,⟦A⟧> {
     spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
 
     #[verifier(external_body)]
-    proof fn instantiate(tracked self, x:X) -> (tracked out:⟦A⟧) where Self: std::marker::Sized {
+    proof fn instantiate(tracked self, x:X) -> (tracked out:⟦A⟧) {
         unimplemented!();
     }
 }
@@ -251,28 +251,35 @@ spec fn ⟨∀⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> boo
     }
 }
 
-/// ∃ x, A(x)
+/// Trait capturing what must be provided to show ∃ (x:X), A(x)
+trait exists_tr<X, ⟦A⟧> {
+    spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
+
+    proof fn destruct(tracked self) -> (tracked out:(Ghost<X>, ⟦A⟧)) where Self: std::marker::Sized
+        ensures self.post()(out.0@)(out.1)
+    ;
+}
+
+/// ∃ x, A(x); modeled as a dyn exists_tr.
+#[verifier(external_body)]
 #[verifier::reject_recursive_types(X)]
 #[verifier::reject_recursive_types(⟦A⟧)]
-tracked struct ⟦∃⟧<X,⟦A⟧> {
-    ghost x:X,
-    ghost f:spec_fn(X) -> spec_fn(⟦A⟧) -> bool,
-    Ha: ⟦A⟧
+struct ⟦∃⟧<X,⟦A⟧> {
+    _phantom : std::marker::PhantomData<(X,⟦A⟧)>,
+}
+impl<X,⟦A⟧> exists_tr<X,⟦A⟧> for ⟦∃⟧<X,⟦A⟧> {
+    spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
+
+    #[verifier(external_body)]
+    proof fn destruct(tracked self) -> (tracked out:(Ghost<X>, ⟦A⟧)) {
+        unimplemented!();
+    }
 }
 spec fn ⟨∃⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool)
     -> spec_fn(⟦∃⟧<X,⟦A⟧>) -> bool
 {
     |res:⟦∃⟧<_,_>| {
-        res.f == ⟨A⟩ &&
-        ⟨A⟩(res.x)(res.Ha)
-    }
-}
-impl<X,⟦A⟧> ⟦∃⟧<X,⟦A⟧> {
-    proof fn destruct(tracked self) -> (tracked ret:(Ghost<X>, ⟦A⟧))
-        ensures
-          (self.f)(ret.0@)(ret.1)
-    {
-        return (Ghost(self.x), self.Ha);
+        res.post() == ⟨A⟩
     }
 }
 
