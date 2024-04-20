@@ -15,6 +15,10 @@ def main():
               .replace("γ", "gamma")
               .replace("σ", "sigma")
               .replace("□", "intuitionistically")
+              .replace("∀", "forall")
+              .replace("£", "lc")
+              .replace("[∗ set]", "big_sepS")
+              .replace("∗", "sep")
               )
     print(output)
 

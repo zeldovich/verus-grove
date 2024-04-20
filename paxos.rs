@@ -149,10 +149,10 @@ type True = ();
 type Pure = ();
 
 /// P ∗ Q
-type ⟦sep⟧<⟦P⟧,⟦Q⟧> = (⟦P⟧, ⟦Q⟧);
-spec fn ⟨sep⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec_fn(⟦Q⟧) -> bool)
-    -> spec_fn(⟦sep⟧<⟦P⟧,⟦Q⟧>) -> bool {
-    |res:⟦sep⟧<_,_>| {
+type ⟦∗⟧<⟦P⟧,⟦Q⟧> = (⟦P⟧, ⟦Q⟧);
+spec fn ⟨∗⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec_fn(⟦Q⟧) -> bool)
+    -> spec_fn(⟦∗⟧<⟦P⟧,⟦Q⟧>) -> bool {
+    |res:⟦∗⟧<_,_>| {
         &&& ⟨P⟩(res.0)
         &&& ⟨Q⟩(res.1)
     }
@@ -223,7 +223,7 @@ spec fn ⟨wand⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:sp
 trait forall_tr<X, ⟦A⟧> {
     spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
 
-    proof fn instantiate(self, x:X) -> (tracked out:⟦A⟧) where Self: std::marker::Sized
+    proof fn instantiate(tracked self, x:X) -> (tracked out:⟦A⟧) where Self: std::marker::Sized
         ensures self.post()(x)(out)
     ;
 }
@@ -232,21 +232,21 @@ trait forall_tr<X, ⟦A⟧> {
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(X)]
 #[verifier::reject_recursive_types(⟦A⟧)]
-struct ⟦forall⟧<X,⟦A⟧> {
+struct ⟦∀⟧<X,⟦A⟧> {
     _phantom : std::marker::PhantomData<(X,⟦A⟧)>,
 }
-impl<X,⟦A⟧> forall_tr<X,⟦A⟧> for ⟦forall⟧<X,⟦A⟧> {
+impl<X,⟦A⟧> forall_tr<X,⟦A⟧> for ⟦∀⟧<X,⟦A⟧> {
     spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
 
     #[verifier(external_body)]
-    proof fn instantiate(self, x:X) -> (tracked out:⟦A⟧) where Self: std::marker::Sized {
+    proof fn instantiate(tracked self, x:X) -> (tracked out:⟦A⟧) where Self: std::marker::Sized {
         unimplemented!();
     }
 }
-spec fn ⟨forall⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool)
-    -> spec_fn(⟦forall⟧<X,⟦A⟧>) -> bool
+spec fn ⟨∀⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool)
+    -> spec_fn(⟦∀⟧<X,⟦A⟧>) -> bool
 {
-    |res:⟦forall⟧<_,_>| {
+    |res:⟦∀⟧<_,_>| {
         res.post() == ⟨A⟩
     }
 }
@@ -256,9 +256,8 @@ spec fn ⟨forall⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> 
 trait □_tr<⟦P⟧> {
     spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool;
 
-    proof fn dup(&self) -> (out:⟦P⟧)
+    proof fn dup(&self) -> (tracked out:⟦P⟧)
         ensures self.post()(out)
-        opens_invariants none
         ;
 }
 
@@ -272,7 +271,7 @@ impl<⟦P⟧> □_tr<⟦P⟧> for ⟦□⟧<⟦P⟧> {
     spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool;
 
     #[verifier(external_body)]
-    proof fn dup(&self) -> (out:⟦P⟧) {
+    proof fn dup(&self) -> (tracked out:⟦P⟧) {
         unimplemented!();
     }
 }
@@ -285,6 +284,123 @@ spec fn ⟨□⟩<⟦P⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool) -> spec_fn(⟦□�
     |res:⟦□⟧<⟦P⟧>| {
         res.post() == ⟨P⟩
     }
+}
+
+
+type Name = u64;
+type Namespace = Set<Name>;
+
+/// fupd
+#[verifier(external_body)]
+#[verifier::reject_recursive_types(⟦P⟧)]
+struct ⟦fupd⟧<⟦P⟧> {
+    _phantom : std::marker::PhantomData<(⟦P⟧)>,
+}
+spec fn ⟨fupd⟩<⟦P⟧>(Eo:Namespace, Ei:Namespace, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
+    -> spec_fn(⟦fupd⟧<⟦P⟧>) -> bool {
+    |res:⟦fupd⟧<⟦P⟧>| {
+        res.post() == ⟨P⟩ &&
+        res.get_Eo() == Eo &&
+        res.get_Ei() == Ei
+    }
+}
+#[verifier(external_body)]
+struct inv_mask {}
+impl View for inv_mask {
+    type V = Namespace;
+    spec fn view(&self) -> Namespace;
+}
+impl<⟦P⟧> ⟦fupd⟧<⟦P⟧> {
+    spec fn get_Eo(&self) -> Namespace;
+    spec fn get_Ei(&self) -> Namespace;
+    spec fn post(&self) -> spec_fn(inner:⟦P⟧) -> bool;
+
+    #[verifier(external_body)]
+    proof fn elim(tracked self, tracked E:&mut inv_mask)
+        -> (tracked ret:⟦P⟧)
+      requires old(E)@ == self.get_Eo()
+      ensures E@ == self.get_Ei(),
+        self.post()(ret)
+    {
+        unimplemented!()
+    }
+}
+
+/// Later credit
+#[verifier(external_body)]
+struct ⟦£⟧ {}
+
+spec fn ⟨£⟩(n:nat) ->
+    spec_fn(⟦£⟧) -> bool;
+
+/// inv N P
+#[verifier::reject_recursive_types(⟦P⟧)]
+type ⟦inv⟧<⟦P⟧> =
+    ⟦□⟧<⟦∀⟧<Namespace, ⟦wand⟧<Pure, ⟦wand⟧<⟦£⟧, ⟦fupd⟧<⟦sep⟧<⟦P⟧, ⟦wand⟧<⟦P⟧, ⟦fupd⟧<True>>>>>>>>;
+
+spec fn ⟨inv⟩<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
+    -> spec_fn(⟦inv⟧<⟦P⟧>) -> bool {
+    ⟨□⟩(⟨∀⟩(|E:Namespace|
+        ⟨wand⟩(
+        |_p| E.contains(N),
+        ⟨wand⟩(⟨£⟩(1), ⟨fupd⟩(E, E.remove(N), ⟨sep⟩(⟨P⟩,
+                                ⟨wand⟩(⟨P⟩, ⟨fupd⟩(E.remove(N), E, |_p| true))
+        )
+    )))))
+}
+
+#[verifier(external_body)]
+proof fn alloc_inv<⟦P⟧>(tracked E:&inv_mask, N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
+    -> (r:⟦inv⟧<⟦P⟧>)
+    ensures ⟨inv⟩(N, ⟨P⟩)(r)
+{
+    unimplemented!()
+}
+
+    #[verifier(external_body)]
+    proof fn false_to_anything<A>() -> (tracked r:A)
+        requires false
+    {
+        unimplemented!();
+    }
+
+
+type ⟦inv_closer⟧<⟦P⟧> = ⟦wand⟧<⟦P⟧, ⟦fupd⟧<True>>;
+spec fn ⟨inv_closer⟩<⟦P⟧>(E:Namespace, N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
+    -> spec_fn(⟦inv_closer⟧<⟦P⟧>) -> bool
+{
+    ⟨wand⟩(⟨P⟩, ⟨fupd⟩(E, E.insert(N), |_p| true))
+}
+
+proof fn inv_open<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool,
+                       tracked E:&mut inv_mask,
+                       tracked Hi:⟦inv⟧<⟦P⟧>, tracked Hlc:⟦£⟧)
+    -> (r:(⟦P⟧, ⟦inv_closer⟧<⟦P⟧>))
+    requires old(E)@.contains(N),
+            holds(Hlc, ⟨£⟩(1)),
+            holds(Hi, ⟨inv⟩(N, ⟨P⟩))
+    ensures
+      E@ == old(E)@.remove(N),
+      ⟨P⟩(r.0),
+      ⟨inv_closer⟩(E@, N, ⟨P⟩)(r.1)
+{
+    // let tracked H = i.Hi.dup().instantiate(E@);
+    let tracked (P, Hclose) = Hi.dup().instantiate(E@).instantiate(()).
+        instantiate(Hlc).elim(E);
+    return (P, Hclose);
+}
+
+proof fn inv_close<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool,
+                        tracked E:&mut inv_mask,
+                        tracked HP:⟦P⟧,
+                        tracked Hclose:⟦inv_closer⟧<⟦P⟧>)
+    requires
+      holds(HP, ⟨P⟩),
+      holds(Hclose, ⟨inv_closer⟩(old(E)@, N, ⟨P⟩))
+    ensures
+      E@ == old(E)@.insert(N)
+{
+    Hclose.instantiate(HP).elim(E);
 }
 
 spec fn holds<X>(x:X, f:spec_fn(X) -> bool) -> bool {
@@ -406,12 +522,12 @@ struct mp_server_names {
 
 
 #[verifier::reject_recursive_types(K)]
-struct ⟦big_sepS⟧<K, ⟦R⟧> {
+struct ⟦[∗ set]⟧<K, ⟦R⟧> {
     contents: Map<K, ⟦R⟧>
 }
-spec fn ⟨big_sepS⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R⟧) -> bool)
-                           -> spec_fn(⟦big_sepS⟧<K, ⟦R⟧>) -> bool {
-    |res:⟦big_sepS⟧<K, ⟦R⟧>| {
+spec fn ⟨[∗ set]⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R⟧) -> bool)
+                           -> spec_fn(⟦[∗ set]⟧<K, ⟦R⟧>) -> bool {
+    |res:⟦[∗ set]⟧<K, ⟦R⟧>| {
         &&& res.contents.dom() =~= s
         &&& forall |k| s.contains(k) ==> ⟨R⟩(k)(#[trigger] res.contents[k])
     }
@@ -419,6 +535,14 @@ spec fn ⟨big_sepS⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R�
 
 
 type EntryType = StateType;
+
+type ⟦own_proposal⟧ = ⟦mlist_ptsto⟧<u64, EntryType>;
+spec fn ⟨own_proposal⟩(γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>) ->
+    spec_fn(⟦own_proposal⟧) -> bool
+{
+    ⟨mlist_ptsto⟩(γsys.proposal_gn, epoch, σ)
+}
+
 type ⟦is_proposal_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
 spec fn ⟨is_proposal_lb⟩(γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>) ->
     spec_fn(⟦is_proposal_lb⟧) -> bool
@@ -426,13 +550,14 @@ spec fn ⟨is_proposal_lb⟩(γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>
     ⟨mlist_ptsto_lb⟩(γsys.proposal_gn, epoch, σ)
 }
 
-// FIXME: wrong prop
-type ⟦is_proposal_facts⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>; 
-spec fn ⟨is_proposal_facts⟩(γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>) ->
-    spec_fn(⟦is_proposal_facts⟧) -> bool
-{
-    ⟨mlist_ptsto_lb⟩(γsys.proposal_gn, epoch, σ)
+
+type ⟦own_vote_tok⟧ = ⟦tok_points_to⟧;
+spec fn ⟨own_vote_tok⟩(γsrv:mp_server_names, epoch:u64) -> spec_fn(⟦own_vote_tok⟧) -> bool {
+    |res| {
+        ⟨tok_points_to⟩(γsrv.vote_gn, epoch)(res)
+    }
 }
+
 
 type ⟦is_accepted_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
 spec fn ⟨is_accepted_lb⟩(γsrv:mp_server_names, epoch:u64, σ:Seq<EntryType>) ->
@@ -456,12 +581,88 @@ spec fn ⟨is_accepted_ro⟩(γsrv:mp_server_names, epoch:u64, l:Seq<EntryType>)
 }
 
 
-type ⟦own_vote_tok⟧ = ⟦tok_points_to⟧;
-spec fn ⟨own_vote_tok⟩(γsrv:mp_server_names, epoch:u64) -> spec_fn(⟦own_vote_tok⟧) -> bool {
-    |res| {
-        ⟨tok_points_to⟩(γsrv.vote_gn, epoch)(res)
-    }
+// own_commit is a mlist_ptsto with key 0
+type ⟦own_commit⟧ = ⟦mlist_ptsto⟧<u64, EntryType>;
+spec fn ⟨own_commit⟩(γsys:mp_system_names, σ:Seq<EntryType>) ->
+    spec_fn(⟦own_commit⟧) -> bool
+{
+    ⟨mlist_ptsto⟩(γsys.state_gn, 0, σ)
 }
+
+type ⟦is_commit_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
+spec fn ⟨is_commit_lb⟩(γsys:mp_system_names, σ:Seq<EntryType>) ->
+    spec_fn(⟦is_commit_lb⟧) -> bool
+{
+    ⟨mlist_ptsto_lb⟩(γsys.state_gn, 0, σ)
+}
+
+
+type Config = Set<mp_server_names>;
+
+struct ⟦is_committed_by⟧ {
+    Hacc_lbs : ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_lb⟧>
+}
+spec fn W_trigger(W:Set<mp_server_names>) -> bool { true }
+spec fn ⟨is_committed_by⟩(config:Config, epoch:u64, σ:Seq<EntryType>)
+    -> spec_fn(⟦is_committed_by⟧) -> bool
+{
+    |res:⟦is_committed_by⟧| {
+    exists |W:Set<mp_server_names>| {
+        #[trigger] W_trigger(W) &&
+        W.subset_of(config) &&
+        2 * W.len() > config.len() &&
+        holds(
+            res.Hacc_lbs,
+            ⟨[∗ set]⟩(W, |γsrv| ⟨is_accepted_lb⟩(γsrv, epoch, σ))
+        )
+    }}
+}
+
+
+type ⟦old_proposal_max⟧ =
+    ⟦□⟧<⟦forall⟧<(u64, Seq<EntryType>),
+        ⟦wand⟧<Pure, 
+            ⟦wand⟧<⟦is_committed_by⟧, Pure>>>>;
+spec fn ⟨old_proposal_max⟩(config:Set<mp_server_names>, γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>)
+    -> spec_fn(⟦old_proposal_max⟧) -> bool {
+    ⟨□⟩(
+    ⟨∀⟩(|f:(u64,Seq<EntryType>)| {
+            let epoch_old = f.0;
+            let σ_old = f.1;
+            ⟨wand⟩(
+              |_p| epoch_old < epoch,
+              ⟨wand⟩(
+                ⟨is_committed_by⟩(config, epoch_old, σ_old),
+                |_p| σ_old.is_prefix_of(σ)))
+        }
+    )
+    )
+}
+
+// FIXME: need fupd_wand here
+type ⟦is_proposal_valid⟧ =
+⟦□⟧<⟦∀⟧<Seq<EntryType>,
+        ⟦wand⟧<Pure, ⟦wand⟧<⟦own_commit⟧, ⟦own_commit⟧>>
+>>;
+spec fn ⟨is_proposal_valid⟩(γsys:mp_system_names, σ:Seq<EntryType>)
+    -> spec_fn(⟦is_proposal_valid⟧) -> bool {
+    ⟨□⟩(
+    ⟨∀⟩(|σ_p:Seq<EntryType>| {
+      ⟨wand⟩(|_p| σ_p.is_prefix_of(σ), ⟨wand⟩(⟨own_commit⟩(γsys, σ_p), ⟨own_commit⟩(γsys, σ)))
+    })
+    )
+}
+
+type ⟦is_proposal_facts⟧ = ⟦∗⟧<⟦old_proposal_max⟧, ⟦is_proposal_valid⟧>;
+spec fn ⟨is_proposal_facts⟩(config:Set<mp_server_names>, γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>) ->
+    spec_fn(⟦is_proposal_facts⟧) -> bool
+{
+    ⟨∗⟩(
+        ⟨old_proposal_max⟩(config, γsys, epoch, σ),
+        ⟨is_proposal_valid⟩(γsys, σ),
+    )
+}
+
 
 type ⟦is_accepted_upper_bound⟧ =
 ⟦sep⟧<Pure,
@@ -502,8 +703,8 @@ struct ⟦own_replica_ghost⟧ {
     HepochIneq : Pure,
     Hacc : ⟦own_accepted⟧,
     Hacc_ub : ⟦or⟧<Pure, ⟦is_accepted_upper_bound⟧>,
-    Hunused : ⟦big_sepS⟧<u64, ⟦own_accepted⟧>,
-    Hvotes : ⟦big_sepS⟧<u64, ⟦own_vote_tok⟧>,
+    Hunused : ⟦[∗ set]⟧<u64, ⟦own_accepted⟧>,
+    Hvotes : ⟦[∗ set]⟧<u64, ⟦own_vote_tok⟧>,
 }
 
 ghost struct MPaxosState {
@@ -511,11 +712,11 @@ ghost struct MPaxosState {
     accepted_epoch : u64,
     log : Seq<EntryType>,
 }
-spec fn ⟨own_replica_ghost⟩(γsys:mp_system_names, γsrv:mp_server_names, st:MPaxosState) 
+spec fn ⟨own_replica_ghost⟩(config:Config, γsys:mp_system_names, γsrv:mp_server_names, st:MPaxosState) 
     -> spec_fn(⟦own_replica_ghost⟧) -> bool {
     |res:⟦own_replica_ghost⟧| {
         holds(res.Hprop_lb, ⟨is_proposal_lb⟩(γsys, st.accepted_epoch, st.log)) &&
-        holds(res.Hprop_facts, ⟨is_proposal_facts⟩(γsys, st.accepted_epoch, st.log)) &&
+        holds(res.Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, st.accepted_epoch, st.log)) &&
         holds(res.Hacc_lb, ⟨is_accepted_lb⟩(γsrv, st.accepted_epoch, st.log)) &&
         holds(res.HepochIneq, |_p| st.accepted_epoch <= st.epoch) &&
         holds(res.Hacc, ⟨own_accepted⟩(γsrv, st.epoch, if (st.accepted_epoch == st.epoch) {
@@ -527,11 +728,11 @@ spec fn ⟨own_replica_ghost⟩(γsys:mp_system_names, γsrv:mp_server_names, st
             |_p| !(st.accepted_epoch < st.epoch),
             ⟨is_accepted_upper_bound⟩(γsrv, st.log, st.accepted_epoch, st.epoch)
         )) &&
-        holds(res.Hunused, ⟨big_sepS⟩(
+        holds(res.Hunused, ⟨[∗ set]⟩(
             Set::new(|e:u64| e > st.epoch),
             |e| ⟨own_accepted⟩(γsrv, e, Seq::empty())
         )) &&
-        holds(res.Hvotes, ⟨big_sepS⟩(
+        holds(res.Hvotes, ⟨[∗ set]⟩(
             Set::new(|e:u64| e > st.epoch),
             |e| ⟨own_vote_tok⟩(γsrv, e)
         ))
@@ -539,13 +740,14 @@ spec fn ⟨own_replica_ghost⟩(γsys:mp_system_names, γsrv:mp_server_names, st
 }
 
 proof fn ghost_replica_get_lb(
+    config:Config,
     γsys:mp_system_names,
     γsrv:mp_server_names,
     st:MPaxosState,
     tracked Hown: &⟦own_replica_ghost⟧,
 ) ->
 (tracked ret: ⟦is_accepted_lb⟧)
-  requires holds(*Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
+  requires holds(*Hown, ⟨own_replica_ghost⟩(config, γsys, γsrv, st)),
   ensures
     ⟨is_accepted_lb⟩(γsrv, st.accepted_epoch, st.log)(ret)
 {
@@ -553,6 +755,7 @@ proof fn ghost_replica_get_lb(
 }
 
 proof fn ghost_replica_accept_same_epoch(
+    config:Config,
     γsys:mp_system_names,
     γsrv:mp_server_names,
     st:MPaxosState,
@@ -567,12 +770,12 @@ proof fn ghost_replica_accept_same_epoch(
     st.epoch <= epoch_p,
     st.accepted_epoch == epoch_p,
     st.log.len() <= log_p.len(),
-    holds(Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
+    holds(Hown, ⟨own_replica_ghost⟩(config, γsys, γsrv, st)),
     holds(Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch_p, log_p)),
-    holds(Hprop_facts, ⟨is_proposal_facts⟩(γsys, epoch_p, log_p)),
+    holds(Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch_p, log_p)),
   ensures
     st.epoch == epoch_p,
-    ⟨own_replica_ghost⟩(γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
+    ⟨own_replica_ghost⟩(config, γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
 {
     let tracked mut Hown = Hown;
     // assert (st.epoch == epoch_p);
@@ -588,6 +791,7 @@ proof fn ghost_replica_accept_same_epoch(
 }
 
 proof fn ghost_replica_accept_same_epoch_old(
+    config:Config,
     γsys:mp_system_names,
     γsrv:mp_server_names,
     st:MPaxosState,
@@ -602,9 +806,9 @@ proof fn ghost_replica_accept_same_epoch_old(
     st.epoch <= epoch_p,
     st.accepted_epoch == epoch_p,
     log_p.len() <= st.log.len(),
-    holds(*Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
+    holds(*Hown, ⟨own_replica_ghost⟩(config, γsys, γsrv, st)),
     holds(*Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch_p, log_p)),
-    holds(*Hprop_facts, ⟨is_proposal_facts⟩(γsys, epoch_p, log_p)),
+    holds(*Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch_p, log_p)),
   ensures
     ⟨is_accepted_lb⟩(γsrv, epoch_p, log_p)(ret)
 {
@@ -615,6 +819,7 @@ proof fn ghost_replica_accept_same_epoch_old(
 
 // This is the first complicated lemma. The other ones are not that bad.
 proof fn ghost_replica_accept_new_epoch(
+    config:Config,
     γsys:mp_system_names,
     γsrv:mp_server_names,
     st:MPaxosState,
@@ -624,16 +829,15 @@ proof fn ghost_replica_accept_new_epoch(
     tracked Hprop_lb: ⟦is_proposal_lb⟧,
     tracked Hprop_facts: ⟦is_proposal_facts⟧,
 ) ->
-
 (tracked ret: ⟦own_replica_ghost⟧)
   requires
     st.epoch <= epoch_p,
     st.accepted_epoch != epoch_p,
-    holds(Hown, ⟨own_replica_ghost⟩(γsys, γsrv, st)),
+    holds(Hown, ⟨own_replica_ghost⟩(config, γsys, γsrv, st)),
     holds(Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch_p, log_p)),
-    holds(Hprop_facts, ⟨is_proposal_facts⟩(γsys, epoch_p, log_p)),
+    holds(Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch_p, log_p)),
   ensures
-    ⟨own_replica_ghost⟩(γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
+    ⟨own_replica_ghost⟩(config, γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
 {
     let tracked mut Hown = Hown;
     let st_p = MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p};
@@ -660,6 +864,36 @@ proof fn ghost_replica_accept_new_epoch(
         assert(false);
         return Hown;
     }
+}
+
+/// Replication invariant.
+struct ⟦is_repl_inv_inner⟧ {
+    Hcommit : ⟦own_commit⟧,
+    Hcommit_by: ⟦is_committed_by⟧,
+    Hprop_lb: ⟦is_proposal_lb⟧,
+    Hprop_facts: ⟦is_proposal_facts⟧,
+}
+const replN : Name = 1u64;
+spec fn repl_inv_trigger(σ:Seq<EntryType>, epoch:u64) -> bool { true }
+spec fn ⟨is_repl_inv_inner⟩(config:Set<mp_server_names>, γsys:mp_system_names)
+    -> spec_fn(⟦is_repl_inv_inner⟧) -> bool
+{
+    |res:⟦is_repl_inv_inner⟧| {
+        exists |σ, epoch| {
+            #[trigger] repl_inv_trigger(σ, epoch) &&
+            holds(res.Hcommit, ⟨own_commit⟩(γsys, σ)) &&
+            holds(res.Hcommit_by, ⟨is_committed_by⟩(config, epoch, σ)) &&
+            holds(res.Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch, σ)) &&
+            holds(res.Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch, σ))
+        }
+    }
+}
+
+type ⟦is_repl_inv⟧ = ⟦inv⟧<⟦is_repl_inv_inner⟧>;
+spec fn ⟨is_repl_inv⟩(config:Set<mp_server_names>, γsys:mp_system_names)
+    -> spec_fn(⟦is_repl_inv⟧) -> bool
+{
+    ⟨inv⟩(replN, ⟨is_repl_inv_inner⟩(config, γsys))
 }
 
 fn main() {}
