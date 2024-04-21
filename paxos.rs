@@ -434,9 +434,9 @@ spec fn ⟨inv⟩<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
     -> spec_fn(⟦inv⟧<⟦P⟧>) -> bool {
     ⟨□⟩(⟨∀⟩(|E:Namespace|
         ⟨wand⟩(
-        |_p| E.contains(N),
+        ⌜ E.contains(N) ⌝,
         ⟨wand⟩(⟨£⟩(1), ⟨fupd⟩(E, E.remove(N), ⟨sep⟩(⟨P⟩,
-                                ⟨wand⟩(⟨P⟩, ⟨fupd⟩(E.remove(N), E, |_p| true))
+                                ⟨wand⟩(⟨P⟩, ⟨fupd⟩(E.remove(N), E, ⌜ true ⌝))
         )
     )))))
 }
@@ -454,7 +454,7 @@ type ⟦inv_closer⟧<⟦P⟧> = ⟦wand⟧<⟦P⟧, ⟦fupd⟧<True>>;
 spec fn ⟨inv_closer⟩<⟦P⟧>(E:Namespace, N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
     -> spec_fn(⟦inv_closer⟧<⟦P⟧>) -> bool
 {
-    ⟨wand⟩(⟨P⟩, ⟨fupd⟩(E, E.insert(N), |_p| true))
+    ⟨wand⟩(⟨P⟩, ⟨fupd⟩(E, E.insert(N), ⌜ true ⌝))
 }
 
 proof fn inv_open<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool,
@@ -845,10 +845,10 @@ spec fn ⟨old_proposal_max⟩(config:Set<mp_server_names>, γsys:mp_system_name
             let epoch_old = f.0;
             let σ_old = f.1;
             ⟨wand⟩(
-              |_p| epoch_old < epoch,
+              ⌜ epoch_old < epoch ⌝,
               ⟨wand⟩(
                 ⟨is_committed_by⟩(config, epoch_old, σ_old),
-                |_p| σ_old.is_prefix_of(σ)))
+                ⌜ σ_old.is_prefix_of(σ) ⌝))
         }
     )
     )
@@ -865,7 +865,7 @@ spec fn ⟨is_proposal_valid⟩(γsys:mp_system_names, σ:Seq<EntryType>)
     -> spec_fn(⟦is_proposal_valid⟧) -> bool {
     ⟨□⟩(
     ⟨∀⟩(|σ_p:Seq<EntryType>| {
-      ⟨wand⟩(|_p| σ_p.is_prefix_of(σ),
+      ⟨wand⟩(⌜ σ_p.is_prefix_of(σ) ⌝,
              ⟨wand⟩(⟨own_commit⟩(γsys, σ_p),
                     ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨own_commit⟩(γsys, σ))))
     })
@@ -900,14 +900,14 @@ spec fn ⟨is_accepted_upper_bound⟩(γsrv:mp_server_names, log:Seq<EntryType>,
         exists |logPrefix:Seq<EntryType>| {
         &&& #[trigger] logPrefixTrigger(logPrefix)
         &&& ⟨sep⟩(
-        |_p| { logPrefix.is_prefix_of(log) },
+        ⌜ logPrefix.is_prefix_of(log) ⌝,
         ⟨sep⟩(
         ⟨is_accepted_ro⟩(γsrv, acceptedEpoch, logPrefix),
         ⟨□⟩(⟨forall⟩(|epoch_p:u64| {
             ⟨wand⟩(
-                |_p| acceptedEpoch < epoch_p,
+                ⌜ acceptedEpoch < epoch_p ⌝,
                 ⟨wand⟩(
-                    |_x| epoch_p < newEpoch,
+                    ⌜ epoch_p < newEpoch ⌝,
                     ⟨is_accepted_ro⟩(γsrv, epoch_p, Seq::empty())
                 )
             )}))))(res)
@@ -938,14 +938,14 @@ spec fn ⟨own_replica_ghost⟩(config:Config, γsys:mp_system_names, γsrv:mp_s
         holds(res.Hprop_lb, ⟨is_proposal_lb⟩(γsys, st.accepted_epoch, st.log)) &&
         holds(res.Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, st.accepted_epoch, st.log)) &&
         holds(res.Hacc_lb, ⟨is_accepted_lb⟩(γsrv, st.accepted_epoch, st.log)) &&
-        holds(res.HepochIneq, |_p| st.accepted_epoch <= st.epoch) &&
+        holds(res.HepochIneq, ⌜ st.accepted_epoch <= st.epoch ⌝) &&
         holds(res.Hacc, ⟨own_accepted⟩(γsrv, st.epoch, if (st.accepted_epoch == st.epoch) {
                     st.log
                 } else {
                     Seq::empty()
                 })) &&
         holds(res.Hacc_ub, ⟨or⟩(
-            |_p| !(st.accepted_epoch < st.epoch),
+            ⌜ !(st.accepted_epoch < st.epoch) ⌝,
             ⟨is_accepted_upper_bound⟩(γsrv, st.log, st.accepted_epoch, st.epoch)
         )) &&
         holds(res.Hunused, ⟨[∗ set]⟩(
@@ -1139,7 +1139,7 @@ proof fn ghost_commit(
 ) ->
 (tracked ret: ⟦is_commit_lb⟧)
   requires
-    old(E)@ =~= Set::new(|_p| true),
+    old(E)@ =~= ⊤,
     holds(Hlc, ⟨£⟩(1)),
     holds(Hinv, ⟨is_repl_inv⟩(config, γsys)),
     holds(Hcom, ⟨is_committed_by⟩(config, epoch, σ)),
