@@ -296,12 +296,17 @@ spec fn ⟨∃⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> boo
     }
 }
 
+trait Duplicable {
+    proof fn dup(tracked &self) -> (tracked r:Self) where Self: std::marker::Sized
+        ensures r == self;
+}
 
+// FIXME:
 /// □ P
 trait □_tr<⟦P⟧> {
     spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool;
 
-    proof fn dup(&self) -> (tracked out:⟦P⟧)
+    proof fn elim(tracked &self) -> (tracked out:⟦P⟧)
         ensures self.post()(out)
         ;
 }
@@ -309,15 +314,57 @@ trait □_tr<⟦P⟧> {
 /// model for dyn □_tr
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(⟦P⟧)]
-struct ⟦□⟧<⟦P⟧> {
+struct dyn_□_tr<⟦P⟧> {
     _phantom : std::marker::PhantomData<(⟦P⟧)>,
 }
-impl<⟦P⟧> □_tr<⟦P⟧> for ⟦□⟧<⟦P⟧> {
+impl<⟦P⟧> □_tr<⟦P⟧> for dyn_□_tr<⟦P⟧> {
     spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool;
 
     #[verifier(external_body)]
-    proof fn dup(&self) -> (tracked out:⟦P⟧) {
-        unimplemented!();
+    proof fn elim(tracked &self) -> (tracked out:⟦P⟧)
+    {
+        unimplemented!()
+    }
+}
+impl<⟦P⟧> dyn_□_tr<⟦P⟧> {
+    #[verifier(external_body)]
+    proof fn from<T:□_tr<⟦P⟧>>(tracked x:T) -> (tracked r:Self)
+        ensures r.post() == x.post(),
+    {
+        unimplemented!()
+    }
+}
+#[verifier::reject_recursive_types(⟦P⟧)]
+struct ⟦□⟧<⟦P⟧: 'static> {
+    x:&'static dyn_□_tr<⟦P⟧>
+}
+impl<⟦P⟧> Duplicable for ⟦□⟧<⟦P⟧> {
+    proof fn dup(tracked &self) -> (tracked r:Self) {
+        return ⟦□⟧{
+            x: self.x
+        }
+    }
+}
+impl<⟦P⟧> □_tr<⟦P⟧> for ⟦□⟧<⟦P⟧> {
+    spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool {
+        self.x.post()
+    }
+
+    proof fn elim(tracked &self) -> (tracked out:⟦P⟧)
+    {
+        self.x.elim()
+    }
+}
+impl<⟦P⟧> ⟦□⟧<⟦P⟧> {
+    #[verifier(external_body)]
+    proof fn from<T:□_tr<⟦P⟧>>(tracked x:T) -> (tracked r:Self)
+        ensures r.post() == x.post(),
+    {
+        let tracked y = dyn_□_tr::from(x);
+        let tracked z: &'static _ = Box::leak(Box::new(y));
+        return ⟦□⟧{
+            x: z
+        };
     }
 }
 // XXX:
@@ -423,8 +470,7 @@ proof fn inv_open<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool,
       ⟨P⟩(r.0),
       ⟨inv_closer⟩(E@, N, ⟨P⟩)(r.1)
 {
-    // let tracked H = i.Hi.dup().instantiate(E@);
-    let tracked (P, Hclose) = Hi.dup().instantiate(E@).instantiate(()).
+    let tracked (P, Hclose) = Hi.dup().elim().instantiate(E@).instantiate(()).
         instantiate(Hlc).elim(E);
     return (P, Hclose);
 }
@@ -464,7 +510,18 @@ struct ⟦mlist_ptsto⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool;
+impl<K,T> ⟦mlist_ptsto⟧<K,T> {
+    spec fn γ(&self) -> gname;
+    spec fn key(&self) -> K;
+    spec fn l(&self) -> Seq<T>;
+}
+spec fn ⟨mlist_ptsto⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto⟧<K,T>) -> bool {
+    |res:⟦mlist_ptsto⟧<_,_>| {
+        &&& res.γ() == γ
+        &&& res.key() == key
+        &&& res.l() == l
+    }
+}
 
 
 #[verifier(external_body)]
@@ -474,7 +531,23 @@ struct ⟦mlist_ptsto_lb⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto_lb⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_lb⟧<K,T>) -> bool;
+impl<K,T> ⟦mlist_ptsto_lb⟧<K,T> {
+    spec fn γ(&self) -> gname;
+    spec fn key(&self) -> K;
+    spec fn l(&self) -> Seq<T>;
+}
+spec fn ⟨mlist_ptsto_lb⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_lb⟧<K,T>) -> bool {
+    |res:⟦mlist_ptsto_lb⟧<_,_>| {
+        &&& res.γ() == γ
+        &&& res.key() == key
+        &&& res.l() == l
+    }
+}
+
+impl<K,T> Duplicable for ⟦mlist_ptsto_lb⟧<K,T> {
+    #[verifier(external_body)]
+    proof fn dup(tracked &self) -> (tracked r:Self) { unimplemented!() }
+}
 
                  
 #[verifier(external_body)]
@@ -484,7 +557,22 @@ struct ⟦mlist_ptsto_ro⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_ro⟧<K,T>) -> bool;
+impl<K,T> Duplicable for ⟦mlist_ptsto_ro⟧<K,T> {
+    #[verifier(external_body)]
+    proof fn dup(tracked &self) -> (tracked r:Self) { unimplemented!() }
+}
+impl<K,T> ⟦mlist_ptsto_ro⟧<K,T> {
+    spec fn γ(&self) -> gname;
+    spec fn key(&self) -> K;
+    spec fn l(&self) -> Seq<T>;
+}
+spec fn ⟨mlist_ptsto_ro⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_ro⟧<K,T>) -> bool {
+    |res:⟦mlist_ptsto_ro⟧<_,_>| {
+        &&& res.γ() == γ
+        &&& res.key() == key
+        &&& res.l() == l
+    }
+}
 
 
 #[verifier(external_body)]
@@ -494,20 +582,29 @@ struct ⟦mlist_ptsto_half⟧<K,T> {
     _phantom1 : std::marker::PhantomData<K>,
     _phantom2 : std::marker::PhantomData<T>,
 }
-spec fn ⟨mlist_ptsto_half⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_half⟧<K,T>) -> bool;
-
+impl<K,T> ⟦mlist_ptsto_half⟧<K,T> {
+    spec fn γ(&self) -> gname;
+    spec fn key(&self) -> K;
+    spec fn l(&self) -> Seq<T>;
+}
+spec fn ⟨mlist_ptsto_half⟩<K,T>(γ:gname, key:K, l:Seq<T>) -> spec_fn(⟦mlist_ptsto_half⟧<K,T>) -> bool {
+    |res:⟦mlist_ptsto_half⟧<_,_>| {
+        &&& res.γ() == γ
+        &&& res.key() == key
+        &&& res.l() == l
+    }
+}
 
 #[verifier(external_body)]
 proof fn mlist_ptsto_lb_comparable<K,T>(
-    γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
     tracked Hlb1: &⟦mlist_ptsto_lb⟧<K,T>,
     tracked Hlb2: &⟦mlist_ptsto_lb⟧<K,T>,
 )
 requires
-  holds(*Hlb1, ⟨mlist_ptsto_lb⟩(γ, k, l)),
-  holds(*Hlb2, ⟨mlist_ptsto_lb⟩(γ, k, l_p)),
+  Hlb1.γ() == Hlb2.γ(),
+  Hlb1.key() == Hlb2.key(),
 ensures
-  l.is_prefix_of(l_p) || l_p.is_prefix_of(l)
+  Hlb1.l().is_prefix_of(Hlb2.l()) || Hlb2.l().is_prefix_of(Hlb1.l())
 {
     unimplemented!()
 }
@@ -515,14 +612,13 @@ ensures
 
 #[verifier(external_body)]
 proof fn mlist_ptsto_update<K,T>(
-    γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
+    l_p:Seq<T>,
     tracked Hptsto: ⟦mlist_ptsto⟧<K,T>,
 ) -> (tracked Hout:⟦mlist_ptsto⟧<K,T>)
 requires
-  l.is_prefix_of(l_p),
-  holds(Hptsto, ⟨mlist_ptsto⟩(γ, k, l)),
+  Hptsto.l().is_prefix_of(l_p),
 ensures
-  holds(Hout, ⟨mlist_ptsto⟩(γ, k, l_p)),
+  holds(Hout, ⟨mlist_ptsto⟩(Hptsto.γ(), Hptsto.key(), l_p)),
 {
     unimplemented!()
 }
@@ -544,30 +640,28 @@ ensures
 
 #[verifier(external_body)]
 proof fn mlist_ptsto_lb_mono<K,T>(
-    γ:gname, k:K, l:Seq<T>, l_p:Seq<T>,
+    l_p:Seq<T>,
     tracked Hptsto: &⟦mlist_ptsto_lb⟧<K,T>,
 ) -> (tracked Hout:⟦mlist_ptsto_lb⟧<K,T>)
 requires
-  l_p.is_prefix_of(l),
-  holds(*Hptsto, ⟨mlist_ptsto_lb⟩(γ, k, l)),
+  l_p.is_prefix_of(Hptsto.l()),
 ensures
-  holds(Hout, ⟨mlist_ptsto_lb⟩(γ, k, l_p)),
+  holds(Hout, ⟨mlist_ptsto_lb⟩(Hptsto.γ(), Hptsto.key(), l_p)),
 {
     unimplemented!()
 }
 
 #[verifier(external_body)]
 proof fn mlist_ptsto_half_combine<K,T>(
-    γ:gname, k:K, l1:Seq<T>, l2:Seq<T>,
     tracked Hptsto1: ⟦mlist_ptsto_half⟧<K,T>,
     tracked Hptsto2: ⟦mlist_ptsto_half⟧<K,T>,
 ) -> (tracked Hptsto:⟦mlist_ptsto⟧<K,T>)
 requires
-  holds(Hptsto1, ⟨mlist_ptsto_half⟩(γ, k, l1)),
-  holds(Hptsto2, ⟨mlist_ptsto_half⟩(γ, k, l2)),
+  Hptsto1.γ() == Hptsto2.γ(),
+  Hptsto1.key() == Hptsto2.key(),
 ensures
-  l1 == l2,
-  holds(Hptsto, ⟨mlist_ptsto⟩(γ, k, l1)),
+  Hptsto1.l() == Hptsto2.l(),
+  holds(Hptsto, ⟨mlist_ptsto⟩(Hptsto1.γ(), Hptsto.key(), Hptsto.l())),
 {
     unimplemented!()
 }
@@ -588,13 +682,10 @@ ensures
 
 #[verifier(external_body)]
 proof fn mlist_ptsto_half_get_lb<K,T>(
-    γ:gname, k:K, l:Seq<T>,
     tracked Hptsto: &⟦mlist_ptsto_half⟧<K,T>,
 ) -> (tracked Hout:⟦mlist_ptsto_lb⟧<K,T>)
-requires
-  holds(*Hptsto, ⟨mlist_ptsto_half⟩(γ, k, l)),
 ensures
-  holds(Hout, ⟨mlist_ptsto_lb⟩(γ, k, l)),
+  holds(Hout, ⟨mlist_ptsto_lb⟩(Hptsto.γ(), Hptsto.key(), Hptsto.l())),
 {
     unimplemented!()
 }
@@ -612,7 +703,26 @@ struct mp_server_names {
     vote_gn : gname,
 }
 
+trait Finite {
+    broadcast proof fn set_is_finite(s:Set<Self>) where Self: std::marker::Sized
+        ensures s.finite();
+}
 
+impl Finite for u64 {
+    #[verifier(external_body)]
+    proof fn set_is_finite(s:Set<Self>) {
+    }
+}
+
+// Causes cyclic self-refernce in definition
+// broadcast use Finite::set_is_finite;
+// broadcast use u64::set_is_finite;
+
+/// A big_sepS requires that the set passed in be finite. When the type K is
+/// itself a finite type, can use Finite::set_is_finite to conclude this. In many
+/// proofs that modify the domain of a big_sepS, it is currently necessary to
+/// prove this because `restrict` and `remove_keys` do not obviously result in a
+/// finite domain.
 #[verifier::reject_recursive_types(K)]
 struct ⟦[∗ set]⟧<K, ⟦R⟧> {
     contents: Map<K, ⟦R⟧>
@@ -620,8 +730,15 @@ struct ⟦[∗ set]⟧<K, ⟦R⟧> {
 spec fn ⟨[∗ set]⟩<K, ⟦R⟧>(s:Set<K>, ⟨R⟩:spec_fn(K) -> spec_fn(⟦R⟧) -> bool)
                            -> spec_fn(⟦[∗ set]⟧<K, ⟦R⟧>) -> bool {
     |res:⟦[∗ set]⟧<K, ⟦R⟧>| {
+        &&& res.contents.dom().finite()
         &&& res.contents.dom() =~= s
         &&& forall |k| s.contains(k) ==> ⟨R⟩(k)(#[trigger] res.contents[k])
+    }
+}
+impl<K, ⟦R⟧:Duplicable> Duplicable for ⟦[∗ set]⟧<K,⟦R⟧> {
+    #[verifier(external_body)]
+    proof fn dup(tracked &self) -> (tracked r:Self) {
+        unimplemented!()
     }
 }
 
@@ -708,6 +825,13 @@ spec fn ⟨is_committed_by⟩(config:Config, epoch:u64, σ:Seq<EntryType>)
             ⟨[∗ set]⟩(W, |γsrv| ⟨is_accepted_lb⟩(γsrv, epoch, σ))
         )
     }}
+}
+impl Duplicable for ⟦is_committed_by⟧ {
+    proof fn dup(tracked &self) -> (tracked r:Self) {
+        return ⟦is_committed_by⟧ {
+            Hacc_lbs: self.Hacc_lbs.dup()
+        };
+    }
 }
 
 
@@ -848,7 +972,7 @@ proof fn ghost_replica_get_lb(
   ensures
     ⟨is_accepted_lb⟩(γsrv, st.accepted_epoch, st.log)(ret)
 {
-    mlist_ptsto_lb_mono(γsrv.accepted_gn, st.accepted_epoch, st.log, st.log, &Hown.Hacc_lb)
+    mlist_ptsto_lb_mono(st.log, &Hown.Hacc_lb)
 }
 
 proof fn ghost_replica_accept_same_epoch(
@@ -877,10 +1001,9 @@ proof fn ghost_replica_accept_same_epoch(
     let tracked mut Hown = Hown;
     // assert (st.epoch == epoch_p);
     // assert (st.accepted_epoch == st.epoch);
-    mlist_ptsto_lb_comparable(γsys.proposal_gn, epoch_p, st.log, log_p,
-                               &Hown.Hprop_lb, &Hprop_lb);
+    mlist_ptsto_lb_comparable(&Hown.Hprop_lb, &Hprop_lb);
     // assert(st.log.is_prefix_of(log_p));
-    Hown.Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, st.log, log_p, Hown.Hacc);
+    Hown.Hacc = mlist_ptsto_update(log_p, Hown.Hacc);
     Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
     Hown.Hprop_lb = Hprop_lb;
     Hown.Hprop_facts = Hprop_facts;
@@ -909,9 +1032,8 @@ proof fn ghost_replica_accept_same_epoch_old(
   ensures
     ⟨is_accepted_lb⟩(γsrv, epoch_p, log_p)(ret)
 {
-    mlist_ptsto_lb_comparable(γsys.proposal_gn, epoch_p, st.log, log_p,
-                               &Hown.Hprop_lb, &Hprop_lb);
-    mlist_ptsto_lb_mono(γsrv.accepted_gn, st.accepted_epoch, st.log, log_p, &Hown.Hacc_lb)
+    mlist_ptsto_lb_comparable(&Hown.Hprop_lb, &Hprop_lb);
+    mlist_ptsto_lb_mono(log_p, &Hown.Hacc_lb)
 }
 
 // This is the first complicated lemma. The other ones are not that bad.
@@ -936,6 +1058,7 @@ proof fn ghost_replica_accept_new_epoch(
   ensures
     ⟨own_replica_ghost⟩(config, γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
 {
+    broadcast use Finite::set_is_finite; // XXX: needed for big_sepS
     let tracked mut Hown = Hown;
     let st_p = MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p};
     Hown.Hprop_lb = Hprop_lb;
@@ -944,15 +1067,16 @@ proof fn ghost_replica_accept_new_epoch(
     if st.epoch < epoch_p {
         Hown.Hunused.contents.tracked_remove_keys(Set::new(|e:u64| st.epoch < e < st_p.epoch));
         let tracked mut Hacc = Hown.Hunused.contents.tracked_remove(epoch_p);
-        Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, Seq::empty(), log_p, Hacc);
+        Hacc = mlist_ptsto_update(log_p, Hacc);
         let tracked Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hacc);
         Hown.Hvotes.contents.tracked_remove_keys(Set::new(|e:u64| st.epoch < e < st_p.epoch));
         Hown.Hvotes.contents.tracked_remove(st_p.epoch);
         Hown.Hacc = Hacc;
         Hown.Hacc_lb = Hacc_lb;
+        assert(Hown.Hvotes.contents.dom().finite());
         return Hown;
     } else if st.epoch == epoch_p {
-        let tracked mut Hacc = mlist_ptsto_update(γsrv.accepted_gn, epoch_p, Seq::empty(), log_p, Hown.Hacc);
+        let tracked mut Hacc = mlist_ptsto_update(log_p, Hown.Hacc);
         let tracked Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hacc);
         Hown.Hacc = Hacc;
         Hown.Hacc_lb = Hacc_lb;
@@ -980,7 +1104,7 @@ spec fn ⟨is_repl_inv_inner⟩(config:Set<mp_server_names>, γsys:mp_system_nam
     let epoch = f.1;
     |res:⟦is_repl_inv_inner_ex⟧| {
         holds(res.Hcommit, ⟨own_commit⟩(γsys, σ)) &&
-        holds(res.Hcommit_by, ⟨is_committed_by⟩(config, epoch, σ)) &&
+        holds(res.Hcommit_by, ⟨is_committed_by⟩(config, epoch, σ)) &&
         holds(res.Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch, σ)) &&
         holds(res.Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, epoch, σ))
     }
@@ -1002,6 +1126,7 @@ proof fn false_to_anything<A>() -> (tracked r:A)
     unimplemented!();
 }
 
+// TODO: fix this once Persistent props work properly
 proof fn ghost_commit(
     tracked E:&mut inv_mask,
     config:Config,
@@ -1034,10 +1159,12 @@ proof fn ghost_commit(
 
     {
         if epoch < epoch_commit {
-            Hown.Hprop_facts.0.dup().instantiate((epoch, σ))
+            Hown.Hprop_facts.0.dup().elim().instantiate((epoch, σ))
             .instantiate(())
-            .instantiate(Hcom);
-            assert(σ.is_prefix_of(σcommit)); // right
+            .instantiate(Hcom.dup());
+            // assert(σ.is_prefix_of(σcommit)); // right
+        } else if epoch == epoch_commit {
+            // mlist_prop
         }
         assert(σcommit.is_prefix_of(σ) || σ.is_prefix_of(σcommit));
     }
@@ -1053,12 +1180,12 @@ proof fn ghost_commit(
     if σcommit.is_prefix_of(σ) {
         // update commit using is_prop_valid
         let tracked mut Hown = Hown; // XXX: due to Verus unsupported 
-        let tracked Hprop_valid = Hprop_facts.1.dup();
+        let tracked Hprop_valid = Hprop_facts.1.dup().elim();
         let tracked Hcommit = Hprop_valid.instantiate(σcommit).
             instantiate(()).
             instantiate(Hown.Hcommit).
             elim(E);
-        let tracked Hlb = mlist_ptsto_half_get_lb(γsys.state_gn, 0, σ, &Hcommit);
+        let tracked Hlb = mlist_ptsto_half_get_lb(&Hcommit);
 
         // close invariant
         Hown.Hcommit = Hcommit;
@@ -1071,8 +1198,8 @@ proof fn ghost_commit(
         return Hlb;
     } else if σ.is_prefix_of(σcommit) {
         // get lb from σcommit
-        let tracked Hlb = mlist_ptsto_half_get_lb(γsys.state_gn, 0, σcommit, &Hown.Hcommit);
-        let tracked Hlb = mlist_ptsto_lb_mono(γsys.state_gn, 0, σcommit, σ, &Hlb);
+        let tracked Hlb = mlist_ptsto_half_get_lb(&Hown.Hcommit);
+        let tracked Hlb = mlist_ptsto_lb_mono(σ, &Hlb);
         // close invariant
         let tracked Hown = ⟦∃⟧::exists((σcommit, epoch_commit), Hown);
         inv_close(replN, ⟨is_repl_inv_inner⟩(config, γsys), E, Hown, Hclose);
