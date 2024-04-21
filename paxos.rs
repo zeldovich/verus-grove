@@ -187,10 +187,10 @@ trait wand_tr<P, Q> {
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(⟦P⟧)]
 #[verifier::reject_recursive_types(⟦Q⟧)]
-struct ⟦wand⟧<⟦P⟧,⟦Q⟧> {
+struct ⟦-∗⟧<⟦P⟧,⟦Q⟧> {
     _phantom : std::marker::PhantomData<(⟦P⟧,⟦Q⟧)>,
 }
-impl<⟦P⟧, ⟦Q⟧> wand_tr<⟦P⟧, ⟦Q⟧> for ⟦wand⟧<⟦P⟧, ⟦Q⟧> {
+impl<⟦P⟧, ⟦Q⟧> wand_tr<⟦P⟧, ⟦Q⟧> for ⟦-∗⟧<⟦P⟧, ⟦Q⟧> {
     spec fn pre(&self) -> spec_fn(x:⟦P⟧) -> bool;
     spec fn post(&self) -> spec_fn(x:⟦Q⟧) -> bool;
 
@@ -199,7 +199,7 @@ impl<⟦P⟧, ⟦Q⟧> wand_tr<⟦P⟧, ⟦Q⟧> for ⟦wand⟧<⟦P⟧, ⟦Q⟧
         unimplemented!();
     }
 }
-impl<⟦P⟧, ⟦Q⟧> ⟦wand⟧<⟦P⟧, ⟦Q⟧> {
+impl<⟦P⟧, ⟦Q⟧> ⟦-∗⟧<⟦P⟧, ⟦Q⟧> {
     #[verifier(external_body)]
     proof fn from<T:wand_tr<⟦P⟧,⟦Q⟧>>(tracked x:T) -> (tracked r:Self)
         ensures r.pre() == x.pre(),
@@ -208,9 +208,9 @@ impl<⟦P⟧, ⟦Q⟧> ⟦wand⟧<⟦P⟧, ⟦Q⟧> {
         unimplemented!()
     }
 }
-spec fn ⟨wand⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec_fn(⟦Q⟧) -> bool)
-    -> spec_fn(⟦wand⟧<⟦P⟧,⟦Q⟧>) -> bool {
-    |res:⟦wand⟧<_,_>| {
+spec fn ⟨-∗⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec_fn(⟦Q⟧) -> bool)
+    -> spec_fn(⟦-∗⟧<⟦P⟧,⟦Q⟧>) -> bool {
+    |res:⟦-∗⟧<_,_>| {
         &&& res.pre() == ⟨P⟩
         &&& res.post() == ⟨Q⟩
     }
@@ -428,15 +428,15 @@ spec fn ⟨£⟩(n:nat) ->
 /// inv N P
 #[verifier::reject_recursive_types(⟦P⟧)]
 type ⟦inv⟧<⟦P⟧> =
-    ⟦□⟧<⟦∀⟧<Namespace, ⟦wand⟧<Pure, ⟦wand⟧<⟦£⟧, ⟦fupd⟧<⟦sep⟧<⟦P⟧, ⟦wand⟧<⟦P⟧, ⟦fupd⟧<True>>>>>>>>;
+    ⟦□⟧<⟦∀⟧<Namespace, ⟦-∗⟧<Pure, ⟦-∗⟧<⟦£⟧, ⟦fupd⟧<⟦∗⟧<⟦P⟧, ⟦-∗⟧<⟦P⟧, ⟦fupd⟧<True>>>>>>>>;
 
 spec fn ⟨inv⟩<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
     -> spec_fn(⟦inv⟧<⟦P⟧>) -> bool {
     ⟨□⟩(⟨∀⟩(|E:Namespace|
-        ⟨wand⟩(
+        ⟨-∗⟩(
         ⌜ E.contains(N) ⌝,
-        ⟨wand⟩(⟨£⟩(1), ⟨fupd⟩(E, E.remove(N), ⟨sep⟩(⟨P⟩,
-                                ⟨wand⟩(⟨P⟩, ⟨fupd⟩(E.remove(N), E, ⌜ true ⌝))
+        ⟨-∗⟩(⟨£⟩(1), ⟨fupd⟩(E, E.remove(N), ⟨∗⟩(⟨P⟩,
+                                ⟨-∗⟩(⟨P⟩, ⟨fupd⟩(E.remove(N), E, ⌜ true ⌝))
         )
     )))))
 }
@@ -450,11 +450,11 @@ proof fn alloc_inv<⟦P⟧>(tracked E:&inv_mask, N:Name, ⟨P⟩:spec_fn(⟦P⟧
 }
 
 
-type ⟦inv_closer⟧<⟦P⟧> = ⟦wand⟧<⟦P⟧, ⟦fupd⟧<True>>;
+type ⟦inv_closer⟧<⟦P⟧> = ⟦-∗⟧<⟦P⟧, ⟦fupd⟧<True>>;
 spec fn ⟨inv_closer⟩<⟦P⟧>(E:Namespace, N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
     -> spec_fn(⟦inv_closer⟧<⟦P⟧>) -> bool
 {
-    ⟨wand⟩(⟨P⟩, ⟨fupd⟩(E, E.insert(N), ⌜ true ⌝))
+    ⟨-∗⟩(⟨P⟩, ⟨fupd⟩(E, E.insert(N), ⌜ true ⌝))
 }
 
 proof fn inv_open<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool,
@@ -835,18 +835,18 @@ impl Duplicable for ⟦is_committed_by⟧ {
 
 
 type ⟦old_proposal_max⟧ =
-    ⟦□⟧<⟦forall⟧<(u64, Seq<EntryType>),
-        ⟦wand⟧<Pure, 
-            ⟦wand⟧<⟦is_committed_by⟧, Pure>>>>;
+    ⟦□⟧<⟦∀⟧<(u64, Seq<EntryType>),
+        ⟦-∗⟧<Pure, 
+            ⟦-∗⟧<⟦is_committed_by⟧, Pure>>>>;
 spec fn ⟨old_proposal_max⟩(config:Set<mp_server_names>, γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>)
     -> spec_fn(⟦old_proposal_max⟧) -> bool {
     ⟨□⟩(
     ⟨∀⟩(|f:(u64,Seq<EntryType>)| {
             let epoch_old = f.0;
             let σ_old = f.1;
-            ⟨wand⟩(
+            ⟨-∗⟩(
               ⌜ epoch_old < epoch ⌝,
-              ⟨wand⟩(
+              ⟨-∗⟩(
                 ⟨is_committed_by⟩(config, epoch_old, σ_old),
                 ⌜ σ_old.is_prefix_of(σ) ⌝))
         }
@@ -856,17 +856,16 @@ spec fn ⟨old_proposal_max⟩(config:Set<mp_server_names>, γsys:mp_system_name
 
 spec const ⊤ : Namespace = Set::new(|_p| true);
 spec const replN : Name = 1;
-// FIXME: need fupd_wand here
 type ⟦is_proposal_valid⟧ =
 ⟦□⟧<⟦∀⟧<Seq<EntryType>,
-        ⟦wand⟧<Pure, ⟦wand⟧<⟦own_commit⟧, ⟦fupd⟧<⟦own_commit⟧>>>
+        ⟦-∗⟧<Pure, ⟦-∗⟧<⟦own_commit⟧, ⟦fupd⟧<⟦own_commit⟧>>>
 >>;
 spec fn ⟨is_proposal_valid⟩(γsys:mp_system_names, σ:Seq<EntryType>)
     -> spec_fn(⟦is_proposal_valid⟧) -> bool {
     ⟨□⟩(
     ⟨∀⟩(|σ_p:Seq<EntryType>| {
-      ⟨wand⟩(⌜ σ_p.is_prefix_of(σ) ⌝,
-             ⟨wand⟩(⟨own_commit⟩(γsys, σ_p),
+      ⟨-∗⟩(⌜ σ_p.is_prefix_of(σ) ⌝,
+             ⟨-∗⟩(⟨own_commit⟩(γsys, σ_p),
                     ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨own_commit⟩(γsys, σ))))
     })
     )
@@ -884,35 +883,24 @@ spec fn ⟨is_proposal_facts⟩(config:Set<mp_server_names>, γsys:mp_system_nam
 
 
 type ⟦is_accepted_upper_bound⟧ =
-⟦sep⟧<Pure,
-  ⟦sep⟧<
-    ⟦is_accepted_ro⟧,
-    ⟦□⟧<⟦forall⟧<u64, ⟦wand⟧<Pure, ⟦wand⟧<Pure, ⟦is_accepted_ro⟧>>>>,
->>;
-#[verifier::opaque]
-closed spec fn logPrefixTrigger(logPrefix:Seq<EntryType>) -> bool {
-    true
+⟦∗⟧<⟦∃⟧<Seq<EntryType>, ⟦∗⟧<Pure, ⟦is_accepted_ro⟧,>>,
+    ⟦□⟧<⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>>>;
+spec fn lt(a:u64, b:u64) -> bool {
+    a < b
 }
 spec fn ⟨is_accepted_upper_bound⟩(γsrv:mp_server_names, log:Seq<EntryType>, acceptedEpoch:u64, newEpoch:u64)
                                   -> spec_fn(⟦is_accepted_upper_bound⟧) -> bool
 {
-    |res| {
-        exists |logPrefix:Seq<EntryType>| {
-        &&& #[trigger] logPrefixTrigger(logPrefix)
-        &&& ⟨sep⟩(
-        ⌜ logPrefix.is_prefix_of(log) ⌝,
-        ⟨sep⟩(
-        ⟨is_accepted_ro⟩(γsrv, acceptedEpoch, logPrefix),
-        ⟨□⟩(⟨forall⟩(|epoch_p:u64| {
-            ⟨wand⟩(
-                ⌜ acceptedEpoch < epoch_p ⌝,
-                ⟨wand⟩(
-                    ⌜ epoch_p < newEpoch ⌝,
-                    ⟨is_accepted_ro⟩(γsrv, epoch_p, Seq::empty())
-                )
-            )}))))(res)
-        }
-    }
+    ⟨∗⟩(⟨∃⟩(|logPrefix:Seq<EntryType>| {
+        ⟨∗⟩(⌜ logPrefix.is_prefix_of(log) ⌝,
+            ⟨is_accepted_ro⟩(γsrv, acceptedEpoch, logPrefix))
+    }),
+    ⟨□⟩(⟨∀⟩(|epoch_p:u64| {
+        ⟨-∗⟩(
+            ⌜ lt(acceptedEpoch, epoch_p) && lt(epoch_p, newEpoch) ⌝,
+            ⟨is_accepted_ro⟩(γsrv, epoch_p, Seq::empty())
+            )
+    })))
 }
 
 
@@ -1006,7 +994,8 @@ proof fn ghost_replica_accept_same_epoch(
     Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
     Hown.Hprop_lb = Hprop_lb;
     Hown.Hprop_facts = Hprop_facts;
-    Hown
+    Hown.Hacc_ub = ⟦or⟧::Left(());
+    return Hown;
 }
 
 proof fn ghost_replica_accept_same_epoch_old(
@@ -1209,6 +1198,76 @@ proof fn ghost_commit(
         assert(false);
         return false_to_anything();
     }
+}
+
+tracked struct NewUbWand {
+    ghost γsrv: mp_server_names,
+    ghost acceptedEpoch: u64,
+    ghost newEpoch: u64,
+    tracked oldWand: ⟦□⟧<⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>>
+}
+
+impl □_tr<⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>> for NewUbWand {
+
+    spec fn post(&self) ->
+        spec_fn(⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>) -> bool
+    {
+        (⟨∀⟩(|epoch_p:u64| {
+            ⟨-∗⟩(
+                ⌜ lt(self.acceptedEpoch, epoch_p) && lt(epoch_p, self.newEpoch) ⌝,
+                ⟨is_accepted_ro⟩(self.γsrv, epoch_p, Seq::empty())
+            )
+        }))
+    }
+    /*
+    ⟨□⟩(⟨forall⟩(|epoch_p:u64| {
+        ⟨-∗⟩(
+            ⌜ lt(acceptedEpoch, epoch_p) && lt(epoch_p, newEpoch) ⌝,
+            ⟨is_accepted_ro⟩(γsrv, epoch_p, Seq::empty())
+            )
+    })))
+    */
+
+    // FIXME: implement this
+    #[verifier(external_body)]
+    proof fn elim(tracked &self) -> (tracked out: ⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>)
+        ensures self.post()(out)
+    {
+        unimplemented!()
+    }
+}
+
+proof fn accepted_upper_bound_mono_epoch(
+    γsrv:mp_server_names,
+    log: Seq<EntryType>,
+    acceptedEpoch:u64,
+    acceptedEpoch_p:u64,
+    newEpoch:u64,
+    tracked Hub: ⟦is_accepted_upper_bound⟧,
+) ->
+(tracked ret: ⟦is_accepted_upper_bound⟧)
+  requires
+    acceptedEpoch < acceptedEpoch_p,
+    acceptedEpoch_p < newEpoch,
+    holds(Hub, ⟨is_accepted_upper_bound⟩(γsrv, log, acceptedEpoch, newEpoch)),
+  ensures
+    holds(ret, ⟨is_accepted_upper_bound⟩(γsrv, Seq::empty(), acceptedEpoch_p, newEpoch)),
+{
+    let tracked Hwand = Hub.1.dup().elim();
+    let tracked Hacc_ro = Hwand.instantiate(acceptedEpoch_p).instantiate(());
+    let tracked Hleft = ⟦∃⟧::exists(Seq::empty(), ((), Hacc_ro));
+
+    let tracked w = NewUbWand{
+        γsrv: γsrv,
+        acceptedEpoch: acceptedEpoch_p,
+        newEpoch: newEpoch,
+        oldWand: Hub.1
+    };
+    let tracked Hright = ⟦□⟧::from(w);
+    // want to produce a □ (∀ ...)
+    // let tracked Hright = Hub.1;
+    let tracked Hub2 = (Hleft, Hright);
+    return Hub2;
 }
 
 fn main() {}

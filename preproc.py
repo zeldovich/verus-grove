@@ -21,6 +21,7 @@ def main():
               .replace("⌝", "}")
               .replace("£", "lc")
               .replace("[∗ set]", "big_sepS")
+              .replace("-∗", "wand")
               .replace("∗", "sep")
               .replace("⊤", "top_mask")
               )
