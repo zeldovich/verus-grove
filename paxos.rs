@@ -1,4 +1,3 @@
-#![allow(mixed_script_confusables)]
 #![verifier::loop_isolation(false)]
 #![allow(non_camel_case_types)]
 use vstd::{prelude::*};
@@ -1126,7 +1125,6 @@ proof fn false_to_anything<A>() -> (tracked r:A)
     unimplemented!();
 }
 
-// TODO: fix this once Persistent props work properly
 proof fn ghost_commit(
     tracked E:&mut inv_mask,
     config:Config,
@@ -1162,9 +1160,12 @@ proof fn ghost_commit(
             Hown.Hprop_facts.0.dup().elim().instantiate((epoch, σ))
             .instantiate(())
             .instantiate(Hcom.dup());
-            // assert(σ.is_prefix_of(σcommit)); // right
         } else if epoch == epoch_commit {
-            // mlist_prop
+            mlist_ptsto_lb_comparable(&Hprop_lb, &Hown.Hprop_lb);
+        } else {
+            Hprop_facts.0.dup().elim().instantiate((epoch_commit, σcommit))
+            .instantiate(())
+            .instantiate(Hown.Hcommit_by.dup());
         }
         assert(σcommit.is_prefix_of(σ) || σ.is_prefix_of(σcommit));
     }
