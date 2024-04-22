@@ -1080,10 +1080,7 @@ proof fn ghost_replica_accept_same_epoch(
     ⟨own_replica_ghost⟩(config, γsys, γsrv, MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p})(ret)
 {
     let tracked mut Hown = Hown;
-    // assert (st.epoch == epoch_p);
-    // assert (st.accepted_epoch == st.epoch);
     mlist_ptsto_lb_comparable(&Hown.Hprop_lb, &Hprop_lb);
-    // assert(st.log.is_prefix_of(log_p));
     Hown.Hacc = mlist_ptsto_update(log_p, Hown.Hacc);
     Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
     Hown.Hprop_lb = Hprop_lb;
@@ -1155,7 +1152,6 @@ proof fn ghost_replica_accept_new_epoch(
         Hown.Hvotes.contents.tracked_remove(st_p.epoch);
         Hown.Hacc = Hacc;
         Hown.Hacc_lb = Hacc_lb;
-        assert(Hown.Hvotes.contents.dom().finite());
         return Hown;
     } else if st.epoch == epoch_p {
         let tracked mut Hacc = mlist_ptsto_update(log_p, Hown.Hacc);
@@ -1248,6 +1244,7 @@ proof fn ghost_commit(
             Hprop_facts.0.dup().elim().instantiate((epoch_commit, σcommit)).
                 instantiate((Pure{}, (Hown.Hcommit_by.dup())));
         }
+        // This assert is here as documentation
         assert(σcommit.is_prefix_of(σ) || σ.is_prefix_of(σcommit));
     }
 
