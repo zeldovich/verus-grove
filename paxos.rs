@@ -748,6 +748,19 @@ ensures
     unimplemented!()
 }
 
+#[verifier(external_body)]
+proof fn mlist_ptsto_ro_lb_ineq<K,T>(
+    tracked Hro: &⟦mlist_ptsto_ro⟧<K,T>,
+    tracked Hlb: &⟦mlist_ptsto_lb⟧<K,T>)
+requires
+  Hro.γ() == Hlb.γ(),
+  Hro.key() == Hlb.key(),
+ensures
+  Hlb.l().is_prefix_of(Hro.l())
+{
+    unimplemented!()
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Paxos separation logic theory
 
@@ -1496,6 +1509,23 @@ ensures
     return false_to_anything();
 }
 
+proof fn accepted_upper_bound_lb(
+    γsrv:mp_server_names,
+    acceptedEpoch:u64,
+    newEpoch:u64,
+    log:Seq<EntryType>,
+    log_p:Seq<EntryType>,
+    tracked Hacc_lb: ⟦is_accepted_lb⟧,
+    tracked Hacc_ub: ⟦is_accepted_upper_bound⟧,
+)
+requires
+  holds(Hacc_lb, ⟨is_accepted_lb⟩(γsrv, acceptedEpoch, log)),
+  holds(Hacc_ub, ⟨is_accepted_upper_bound⟩(γsrv, log_p, acceptedEpoch, newEpoch)),
+ensures
+  log.is_prefix_of(log_p)
+{
+    mlist_ptsto_ro_lb_ineq(&Hacc_ub.0.destruct().1.1, &Hacc_lb);
+}
 
 fn main() {}
 }
