@@ -342,6 +342,16 @@ impl<⟦A⟧:Duplicable, ⟦B⟧:Duplicable> Duplicable for ⟦∗⟧<⟦A⟧,�
     }
 }
 
+impl<⟦A⟧:Duplicable, ⟦B⟧:Duplicable> Duplicable for ⟦∨⟧<⟦A⟧,⟦B⟧> {
+    proof fn dup(tracked &self) -> (tracked r:Self)
+    {
+        match self {
+            ⟦∨⟧::Left(x) => return ⟦∨⟧::Left(x.dup()),
+            ⟦∨⟧::Right(x) => return ⟦∨⟧::Right(x.dup()),
+        }
+    }
+}
+
 impl Duplicable for Pure {
     proof fn dup(tracked &self) -> (tracked r:Pure)
     {
@@ -787,7 +797,7 @@ ensures
 }
 
 #[verifier(external_body)]
-proof fn mlist_ptsto_ro_persist<K,T>(
+proof fn mlist_ptsto_persist<K,T>(
     tracked Hptsto: ⟦mlist_ptsto⟧<K,T>,
 )
 -> (tracked Hro: ⟦mlist_ptsto_ro⟧<K,T>)
@@ -1011,7 +1021,7 @@ impl Duplicable for ⟦is_accepted_upper_bound⟧ {
 */
 
 
-struct ⟦own_replica_ghost⟧ {
+tracked struct ⟦own_replica_ghost⟧ {
     Hprop_lb : ⟦is_proposal_lb⟧,
     Hprop_facts : ⟦is_proposal_facts⟧,
     Hacc_lb : ⟦is_accepted_lb⟧,
@@ -1801,25 +1811,107 @@ ensures
 }
 
 
+// Closure for re-establishing is_accepted_upper_bound when entering a new
+// upper-bound epoch.
 tracked struct NewEpochUbClosure {
-    ghost acceptedEpoch: u64,
+    ghost st: MPaxosState,
     ghost newEpoch: u64,
     ghost γsrv: mp_server_names,
-    tracked Haccs : ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_ro⟧>,
-    tracked Hacc : ⟦is_accepted_ro⟧,
+
+    ghost epoch_p: u64, // ignored above ∀
+
+    tracked Haccs : ⟦[∗ set]⟧<u64, ⟦is_accepted_ro⟧>,
+    tracked Hprev_acc_ro : ⟦is_accepted_ro⟧,
+    tracked Hacc_ub : ⟦or⟧<Pure, ⟦is_accepted_upper_bound⟧>,
 }
 
+type acc_ub_wand = ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>;
 type acc_ub_forall = ⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>;
+impl NewEpochUbClosure {
+    spec fn concrete_inv(&self) -> bool {
+        holds(self.Hprev_acc_ro, ⟨is_accepted_ro⟩(self.γsrv, self.st.epoch,
+                                                  if (self.st.accepted_epoch == self.st.epoch) {
+                                                      self.st.log
+                                                  } else {
+                                                      Seq::empty()
+                                                  })) &&
+        holds(self.Haccs, ⟨[∗ set]⟩(Set::new(|e:u64| self.st.epoch < e < self.newEpoch),
+                                    |e:u64| ⟨is_accepted_ro⟩(self.γsrv, e, Seq::empty())
+        )) &&
+        holds(self.Hacc_ub, ⟨∨⟩(
+            ⌜ !(self.st.accepted_epoch < self.st.epoch) ⌝,
+            ⟨is_accepted_upper_bound⟩(self.γsrv, self.st.log, self.st.accepted_epoch, self.st.epoch)
+        ))
+    }
+}
+impl wand_tr<Pure, ⟦is_accepted_ro⟧> for NewEpochUbClosure {
+    spec fn inv(&self) -> bool {
+        self.concrete_inv()
+    }
 
+    spec fn pre(&self) -> spec_fn(Pure) -> bool {
+        ⌜ lt(self.st.accepted_epoch, self.epoch_p) && lt(self.epoch_p, self.newEpoch) ⌝
+    }
+
+    spec fn post(&self) -> spec_fn(⟦is_accepted_ro⟧) -> bool {
+        ⟨is_accepted_ro⟩(self.γsrv, self.epoch_p, Seq::empty())
+    }
+
+    // Main proof
+    proof fn instantiate(tracked self, tracked Hpre:Pure) ->
+        (tracked Hpost:⟦is_accepted_ro⟧)
+    {
+        if self.epoch_p > self.st.epoch {
+            // use Haccs
+            let tracked mut s = self;
+            return s.Haccs.contents.tracked_remove(self.epoch_p);
+        } else if self.epoch_p == self.st.epoch  {
+            // use Hprev_acc_ro
+            return self.Hprev_acc_ro.dup();
+        } else {
+            // self.epoch_p < self.st.epoch
+            // use Hacc_ub
+            match self.Hacc_ub {
+                ⟦∨⟧::Left(Hbad) => return false_to_anything(),
+                ⟦∨⟧::Right(Hacc_ub) => {
+                    return Hacc_ub.1.elim().instantiate(self.epoch_p).
+                        instantiate(Pure{});
+                }
+            }
+        }
+    }
+}
+impl forall_tr<u64, acc_ub_wand> for NewEpochUbClosure {
+    spec fn inv(&self) -> bool {
+        self.concrete_inv()
+    }
+
+    spec fn post(&self) -> spec_fn(epoch_p:u64) -> spec_fn(acc_ub_wand) -> bool {
+        |epoch_p:u64| {
+            ⟨-∗⟩(
+                ⌜ lt(self.st.accepted_epoch, epoch_p) && lt(epoch_p, self.newEpoch) ⌝,
+                ⟨is_accepted_ro⟩(self.γsrv, epoch_p, Seq::empty())
+            )
+        }
+    }
+
+    proof fn instantiate(tracked self, epoch_p:u64) ->
+        (tracked ret:acc_ub_wand)
+    {
+        let tracked mut s = self;
+        s.epoch_p = epoch_p;
+        return ⟦-∗⟧::from(s);
+    }
+}
 impl □_tr<acc_ub_forall> for NewEpochUbClosure {
     spec fn inv(&self) -> bool {
-        true
+        self.concrete_inv()
     }
 
     spec fn post(&self) -> spec_fn(acc_ub_forall) -> bool {
         (⟨∀⟩(|epoch_p:u64| {
             ⟨-∗⟩(
-                ⌜ lt(self.acceptedEpoch, epoch_p) && lt(epoch_p, self.newEpoch) ⌝,
+                ⌜ lt(self.st.accepted_epoch, epoch_p) && lt(epoch_p, self.newEpoch) ⌝,
                 ⟨is_accepted_ro⟩(self.γsrv, epoch_p, Seq::empty())
             )
         }))
@@ -1827,11 +1919,45 @@ impl □_tr<acc_ub_forall> for NewEpochUbClosure {
 
     proof fn elim(tracked &'static self) -> (tracked out: acc_ub_forall)
     {
-        assert(false);
-        return false_to_anything();
+        let tracked s2 = NewEpochUbClosure {
+            st: self.st,
+            newEpoch: self.newEpoch,
+            epoch_p: self.epoch_p,
+            γsrv: self.γsrv,
+            Haccs: self.Haccs.dup(),
+            Hprev_acc_ro: self.Hprev_acc_ro.dup(),
+            Hacc_ub: self.Hacc_ub.dup(),
+        };
+        return ⟦∀⟧::from(s2);
     }
 }
 
+
+proof fn freeze_all(
+    tracked m: Map<u64, ⟦own_accepted⟧>
+) -> (tracked ret:Map<u64, ⟦is_accepted_ro⟧>)
+  requires m.dom().finite()
+  ensures
+    ret.dom() == m.dom(),
+    forall |k| m.contains_key(k) ==> ret.contains_key(k) &&
+            (#[trigger] ret[k]).γ() == m[k].γ() &&
+            ret[k].key() == m[k].key() &&
+            ret[k].l() == m[k].l()
+  decreases m.dom().len()
+{
+    let l = m.dom().len();
+    let tracked mut m = m;
+    if m.dom().len() == 0 {
+        m.dom().lemma_len0_is_empty();
+        return Map::tracked_empty();
+    }
+
+    let e = m.dom().choose();
+    let tracked res = mlist_ptsto_persist(m.tracked_remove(e));
+    let tracked mut ret = freeze_all(m);
+    ret.tracked_insert(e, res);
+    return ret;
+}
 
 proof fn ghost_replica_enter_new_epoch(
     config: Config,
@@ -1855,13 +1981,17 @@ ensures
   holds(Hout.3, ⟨is_proposal_lb⟩(γsys, st.accepted_epoch, st.log)),
   holds(Hout.4, ⟨is_proposal_facts⟩(config, γsys, st.accepted_epoch, st.log)),
 {
-    let tracked mut Hreplica = Hreplica;
     broadcast use Finite::set_is_finite; // XXX: needed for big_sepS
+
+    let tracked mut Hreplica = Hreplica;
     Hreplica.Hvotes.contents.tracked_remove_keys(Set::new(|e:u64| st.epoch < e < newEpoch));
     let tracked Hvote = Hreplica.Hvotes.contents.tracked_remove(newEpoch);
-    Hreplica.Hunused.contents.tracked_remove_keys(Set::new(|e:u64| st.epoch < e < newEpoch));
-
-    let tracked Hacc_prev_ro = mlist_ptsto_ro_persist(Hreplica.Hacc);
+    let tracked mut Haccs_skip =
+        ⟦[∗ set]⟧{
+            contents: Hreplica.Hunused.contents.tracked_remove_keys(
+                Set::new(|e:u64| st.epoch < e < newEpoch))
+        };
+    let tracked Hacc_prev_ro = mlist_ptsto_persist(Hreplica.Hacc);
     let tracked Hacc = Hreplica.Hunused.contents.tracked_remove(newEpoch);
 
     let tracked Hub_left;
@@ -1874,29 +2004,39 @@ ensures
             ));
         } else {
             // use Hreplica.Hacc_ub(right).0
-            if let ⟦∨⟧::Left(Hbad) = Hreplica.Hacc_ub {
+            if let ⟦∨⟧::Left(Hbad) = Hreplica.Hacc_ub.dup() {
                 Hub_left = false_to_anything();
-            } else if let ⟦∨⟧::Right(Hacc_ub) = Hreplica.Hacc_ub {
+            } else if let ⟦∨⟧::Right(Hacc_ub) = Hreplica.Hacc_ub.dup() {
                 Hub_left = Hacc_ub.0;
             } else {
                 Hub_left = false_to_anything();
             }
         }
-        assert(
-            holds(Hub_left,
+        /* assert(holds(Hub_left,
                   ⟨∃⟩(|logPrefix:Seq<EntryType>| {
                       ⟨∗⟩(⌜ logPrefix.is_prefix_of(st.log) ⌝,
                           ⟨is_accepted_ro⟩(γsrv, st.accepted_epoch, logPrefix))
                   }))
-        );
+        ); */
     }
 
+    let tracked mut Haccs_skip_ro =
+        ⟦[∗ set]⟧::<u64, ⟦is_accepted_ro⟧> {
+            contents: freeze_all(Haccs_skip.contents)
+        };
+    assert(
+        holds(Haccs_skip_ro, ⟨[∗ set]⟩(Set::new(|e:u64| st.epoch < e < newEpoch),
+                                    |e:u64| ⟨is_accepted_ro⟩(γsrv, e, Seq::empty())))
+    );
+
     let tracked Hclos = NewEpochUbClosure {
-        acceptedEpoch: st.accepted_epoch,
+        st: st,
         newEpoch: newEpoch,
+        epoch_p: 0,
         γsrv: γsrv,
-        Haccs: false_to_anything(), // TODO: freeze
-        Hacc: Hacc_prev_ro.dup(),
+        Haccs: Haccs_skip_ro, // TODO: freeze
+        Hprev_acc_ro: Hacc_prev_ro.dup(),
+        Hacc_ub: Hreplica.Hacc_ub.dup(),
     };
     let tracked Hub_wand = ⟦□⟧::from(Hclos);
     let tracked Hacc_ub = (Hub_left, Hub_wand);
