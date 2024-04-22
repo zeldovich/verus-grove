@@ -32,8 +32,9 @@ verus! {
         // phantom: core::marker::PhantomData<A>,
         // FIXME: going to run into trouble with having physical resources A
         // inside the AtomicInvariant.
-        atomic_inv: AtomicInvariant<(), LockResources<A>, LockInv<LockResources<A>>>,
-        locked: PAtomicU64,
+        // atomic_inv: AtomicInvariant<(), LockResources<A>, LockInv<LockResources<A>>>,
+        // locked: PAtomicU64,
+        l : std::sync::Mutex<A>
     }
 
     impl<A> Lock<A> {
@@ -46,15 +47,19 @@ verus! {
             ensures l.get_pred() == pred
             // ensures forall|a:A| l.pred(a) == pred(a)
         {
-            // let data = Arc::new(Mutex::new(0));
-            unimplemented!();
+            return Lock{
+                l: std::sync::Mutex::new(a)
+            };
         }
 
+        // XXX: could implement this by requiring physical stuff to by Copy, and
+        // making ghost stuff separate.
         #[verifier::external_body]
         pub fn lock(&self) -> (a:A)
             ensures self.get_pred()(a)
         {
-            unimplemented!();
+            unimplemented!()
+            // *self.l.lock().unwrap()
         }
 
         #[verifier::external_body]

@@ -99,18 +99,45 @@ spec fn proposer_inv(s:ProposerState, res:ProposerResource) -> bool {
     &&& forall |j| 0 <= j < s.clerks.len() ==> #[trigger] s.clerks[j].inv()
 }
 
+pub struct Committer<'a> {
+    s: ProposerState,
+    res: Tracked<ProposerResource>,
+    p: &'a Proposer
+}
+
 impl Proposer {
     spec fn inv(self) -> bool {
         forall |s| #[trigger] self.mu.get_pred()(s) <==> proposer_inv(s.0, s.1@)
     }
 
     // TODO: take as input a "step" function
-    fn try_apply(&self) -> Error
+    fn start<'a>(&'a self) -> (r:(u64, Committer<'a>))
         requires self.inv()
+        ensures r.1.inv(r.0)
     {
         let (mut s, mut res) = self.mu.lock();
+        return (s.state, Committer {
+            s: s,
+            res: res,
+            p: self,
+        });
+    }
+}
+
+impl<'a> Committer<'a> {
+    spec fn inv(self, oldState:u64) -> bool {
+        self.p.inv() &&
+        self.s.state == oldState &&
+        proposer_inv(self.s, self.res@)
+    }
+
+    fn try_commit(self, newState:StateType, oldState:Ghost<StateType>) -> Error
+        requires self.inv(oldState@)
+    {
+        let mut s = self.s;
+        let mut res = self.res;
         if !s.is_leader {
-            self.mu.unlock((s, res));
+            self.p.mu.unlock((s, res));
             return ENotLeader;
         }
 
@@ -118,7 +145,7 @@ impl Proposer {
         let args = AcceptorApplyArgs{
             epoch: s.epoch,
             next_index: s.next_index,
-            state: s.state,
+            state: newState,
         };
 
         let mut i : usize = 0;
@@ -140,6 +167,7 @@ impl Proposer {
         }
         return EEpochStale
     }
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2034,7 +2062,7 @@ ensures
         newEpoch: newEpoch,
         epoch_p: 0,
         γsrv: γsrv,
-        Haccs: Haccs_skip_ro, // TODO: freeze
+        Haccs: Haccs_skip_ro,
         Hprev_acc_ro: Hacc_prev_ro.dup(),
         Hacc_ub: Hreplica.Hacc_ub.dup(),
     };
@@ -2048,6 +2076,7 @@ ensures
     return (Hreplica, Hvote, Hacc_ub, Hprop_lb, Hprop_facts);
 }
 
+// TODO: state and prove ghost_leader_propose
 
 fn main() {}
 }
