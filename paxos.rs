@@ -173,11 +173,14 @@ spec fn ⟨or⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:spec
 
 /// P -∗ Q
 trait wand_tr<P, Q> {
+    spec fn inv(&self) -> bool;
     spec fn pre(&self) -> spec_fn(x:P) -> bool;
     spec fn post(&self) -> spec_fn(x:Q) -> bool;
 
     proof fn instantiate(tracked self, tracked i:P) -> (tracked out:Q) where Self: std::marker::Sized
-        requires self.pre()(i)
+        requires
+          self.inv(),
+          self.pre()(i),
         ensures self.post()(out)
         opens_invariants none
         ;
@@ -191,6 +194,7 @@ struct ⟦-∗⟧<⟦P⟧,⟦Q⟧> {
     _phantom : std::marker::PhantomData<(⟦P⟧,⟦Q⟧)>,
 }
 impl<⟦P⟧, ⟦Q⟧> wand_tr<⟦P⟧, ⟦Q⟧> for ⟦-∗⟧<⟦P⟧, ⟦Q⟧> {
+    spec fn inv(&self) -> bool;
     spec fn pre(&self) -> spec_fn(x:⟦P⟧) -> bool;
     spec fn post(&self) -> spec_fn(x:⟦Q⟧) -> bool;
 
@@ -202,7 +206,10 @@ impl<⟦P⟧, ⟦Q⟧> wand_tr<⟦P⟧, ⟦Q⟧> for ⟦-∗⟧<⟦P⟧, ⟦Q⟧
 impl<⟦P⟧, ⟦Q⟧> ⟦-∗⟧<⟦P⟧, ⟦Q⟧> {
     #[verifier(external_body)]
     proof fn from<T:wand_tr<⟦P⟧,⟦Q⟧>>(tracked x:T) -> (tracked r:Self)
-        ensures r.pre() == x.pre(),
+        requires x.inv()
+        ensures
+        r.inv(),
+        r.pre() == x.pre(),
         r.post() == x.post(),
     {
         unimplemented!()
@@ -213,6 +220,7 @@ spec fn ⟨-∗⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:sp
     |res:⟦-∗⟧<_,_>| {
         &&& res.pre() == ⟨P⟩
         &&& res.post() == ⟨Q⟩
+        &&& res.inv()
     }
 }
 
@@ -220,9 +228,11 @@ spec fn ⟨-∗⟩<⟦P⟧,⟦Q⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool, ⟨Q⟩:sp
 
 /// ∀ (x:X), A(x)   where A is a predicate.
 trait forall_tr<X, ⟦A⟧> {
+    spec fn inv(&self) -> bool;
     spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
 
     proof fn instantiate(tracked self, x:X) -> (tracked out:⟦A⟧) where Self: std::marker::Sized
+        requires self.inv()
         ensures self.post()(x)(out)
     ;
 }
@@ -235,6 +245,7 @@ struct ⟦∀⟧<X,⟦A⟧> {
     _phantom : std::marker::PhantomData<(X,⟦A⟧)>,
 }
 impl<X,⟦A⟧> forall_tr<X,⟦A⟧> for ⟦∀⟧<X,⟦A⟧> {
+    spec fn inv(&self) -> bool;
     spec fn post(&self) -> spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool;
 
     #[verifier(external_body)]
@@ -242,11 +253,23 @@ impl<X,⟦A⟧> forall_tr<X,⟦A⟧> for ⟦∀⟧<X,⟦A⟧> {
         unimplemented!();
     }
 }
+impl<X,⟦A⟧> ⟦∀⟧<X,⟦A⟧> {
+    #[verifier(external_body)]
+    proof fn from<T:forall_tr<X, ⟦A⟧>>(tracked t:T) -> (tracked r:Self)
+        requires t.inv()
+        ensures
+          r.inv(),
+          r.post() == t.post(),
+    {
+        unimplemented!()
+    }
+}
 spec fn ⟨∀⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> bool)
     -> spec_fn(⟦∀⟧<X,⟦A⟧>) -> bool
 {
     |res:⟦∀⟧<_,_>| {
-        res.post() == ⟨A⟩
+        &&& res.post() == ⟨A⟩ 
+        &&& res.inv()
     }
 }
 
@@ -300,14 +323,16 @@ trait Duplicable {
         ensures r == self;
 }
 
-// FIXME:
 /// □ P
 trait □_tr<⟦P⟧> {
+    // This is here so the implementor can maintain a mathematical property
+    // about the object that provides the elim function.
+    spec fn inv(&self) -> bool;
     spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool;
 
-    proof fn elim(tracked &self) -> (tracked out:⟦P⟧)
-        ensures self.post()(out)
-        ;
+    proof fn elim(tracked &'static self) -> (tracked out:⟦P⟧)
+        requires self.inv()
+        ensures self.post()(out);
 }
 
 /// model for dyn □_tr
@@ -317,10 +342,11 @@ struct dyn_□_tr<⟦P⟧> {
     _phantom : std::marker::PhantomData<(⟦P⟧)>,
 }
 impl<⟦P⟧> □_tr<⟦P⟧> for dyn_□_tr<⟦P⟧> {
+    spec fn inv(&self) -> bool;
     spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool;
 
     #[verifier(external_body)]
-    proof fn elim(tracked &self) -> (tracked out:⟦P⟧)
+    proof fn elim(tracked &'static self) -> (tracked out:⟦P⟧)
     {
         unimplemented!()
     }
@@ -328,7 +354,9 @@ impl<⟦P⟧> □_tr<⟦P⟧> for dyn_□_tr<⟦P⟧> {
 impl<⟦P⟧> dyn_□_tr<⟦P⟧> {
     #[verifier(external_body)]
     proof fn from<T:□_tr<⟦P⟧>>(tracked x:T) -> (tracked r:Self)
-        ensures r.post() == x.post(),
+        requires x.inv()
+        ensures  r.post() == x.post(),
+        r.inv(),
     {
         unimplemented!()
     }
@@ -345,6 +373,10 @@ impl<⟦P⟧> Duplicable for ⟦□⟧<⟦P⟧> {
     }
 }
 impl<⟦P⟧> □_tr<⟦P⟧> for ⟦□⟧<⟦P⟧> {
+    spec fn inv(&self) -> bool {
+        self.x.inv()
+    }
+
     spec fn post(&self) -> spec_fn(out:⟦P⟧) -> bool {
         self.x.post()
     }
@@ -355,9 +387,12 @@ impl<⟦P⟧> □_tr<⟦P⟧> for ⟦□⟧<⟦P⟧> {
     }
 }
 impl<⟦P⟧> ⟦□⟧<⟦P⟧> {
+    // FIXME: want to leak something to &'static in proof code
     #[verifier(external_body)]
     proof fn from<T:□_tr<⟦P⟧>>(tracked x:T) -> (tracked r:Self)
+        requires x.inv()
         ensures r.post() == x.post(),
+        r.inv(),
     {
         let tracked y = dyn_□_tr::from(x);
         let tracked z: &'static _ = Box::leak(Box::new(y));
@@ -373,7 +408,8 @@ impl<⟦P⟧> ⟦□⟧<⟦P⟧> {
 // via spec fn" style for lemma. So, having ⟦□⟧ impl the trait.
 spec fn ⟨□⟩<⟦P⟧>(⟨P⟩:spec_fn(⟦P⟧) -> bool) -> spec_fn(⟦□⟧<⟦P⟧>) -> bool {
     |res:⟦□⟧<⟦P⟧>| {
-        res.post() == ⟨P⟩
+        res.post() == ⟨P⟩ &&
+        res.inv()
     }
 }
 
@@ -713,7 +749,7 @@ impl Finite for u64 {
     }
 }
 
-// Causes cyclic self-refernce in definition
+// FIXME(verus): Causes cyclic self-refernce in definition
 // broadcast use Finite::set_is_finite;
 // broadcast use u64::set_is_finite;
 
@@ -1200,40 +1236,94 @@ proof fn ghost_commit(
     }
 }
 
-tracked struct NewUbWand {
+// This has all the closure context for proving the right hand conjunct is
+// is_accepted_upper_bound for going to a new epoch.
+tracked struct NewUbBox {
     ghost γsrv: mp_server_names,
     ghost acceptedEpoch: u64,
+    ghost acceptedEpoch_p: u64,
     ghost newEpoch: u64,
-    tracked oldWand: ⟦□⟧<⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>>
+    ghost epoch_p: u64, // unused for most
+    tracked HoldWand: ⟦□⟧<⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>>
+}
+impl NewUbBox {
+    spec fn concrete_inv(&self) -> bool {
+        self.acceptedEpoch < self.acceptedEpoch_p &&
+        self.acceptedEpoch_p < self.newEpoch &&
+        holds(self.HoldWand, ⟨□⟩(⟨∀⟩(|epoch_p:u64|{
+            ⟨-∗⟩(⌜ lt(self.acceptedEpoch, epoch_p) && lt(epoch_p, self.newEpoch) ⌝,
+                 ⟨is_accepted_ro⟩(self.γsrv, epoch_p, Seq::empty())
+            )
+        })))
+    }
 }
 
-impl □_tr<⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>> for NewUbWand {
+impl wand_tr<Pure, ⟦is_accepted_ro⟧> for NewUbBox {
+    spec fn inv(&self) -> bool {
+        self.concrete_inv()
+    }
+
+    spec fn pre(&self) -> spec_fn(Pure) -> bool {
+        ⌜ lt(self.acceptedEpoch_p, self.epoch_p) && lt(self.epoch_p, self.newEpoch) ⌝
+    }
+
+    spec fn post(&self) -> spec_fn(⟦is_accepted_ro⟧) -> bool {
+        ⟨is_accepted_ro⟩(self.γsrv, self.epoch_p, Seq::empty())
+    }
+
+    proof fn instantiate(tracked self, tracked i:Pure) -> (tracked out:⟦is_accepted_ro⟧) {
+        return self.HoldWand.elim().instantiate(self.epoch_p).instantiate(());
+    }
+}
+
+impl ∀_tr<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>> for NewUbBox {
+    spec fn inv(&self) -> bool {
+        self.concrete_inv()
+    }
+
+    spec fn post(&self) -> spec_fn(u64) ->
+        spec_fn(⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>) -> bool
+    {
+        |epoch_p:u64| {
+            ⟨-∗⟩(⌜ lt(self.acceptedEpoch_p, epoch_p) && lt(epoch_p, self.newEpoch) ⌝,
+                 ⟨is_accepted_ro⟩(self.γsrv, epoch_p, Seq::empty()))
+        }
+    }
+
+    proof fn instantiate(tracked self, epoch_p:u64) ->
+        (tracked out: ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>)
+    {
+        let tracked mut s2 = self;
+        s2.epoch_p = epoch_p;
+        return ⟦-∗⟧::from(s2);
+    }
+}
+
+impl □_tr<⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>> for NewUbBox {
+    spec fn inv(&self) -> bool {
+        self.concrete_inv()
+    }
 
     spec fn post(&self) ->
         spec_fn(⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>) -> bool
     {
         (⟨∀⟩(|epoch_p:u64| {
-            ⟨-∗⟩(
-                ⌜ lt(self.acceptedEpoch, epoch_p) && lt(epoch_p, self.newEpoch) ⌝,
-                ⟨is_accepted_ro⟩(self.γsrv, epoch_p, Seq::empty())
-            )
+            ⟨-∗⟩(⌜ lt(self.acceptedEpoch_p, epoch_p) && lt(epoch_p, self.newEpoch) ⌝,
+                ⟨is_accepted_ro⟩(self.γsrv, epoch_p, Seq::empty()))
         }))
     }
-    /*
-    ⟨□⟩(⟨forall⟩(|epoch_p:u64| {
-        ⟨-∗⟩(
-            ⌜ lt(acceptedEpoch, epoch_p) && lt(epoch_p, newEpoch) ⌝,
-            ⟨is_accepted_ro⟩(γsrv, epoch_p, Seq::empty())
-            )
-    })))
-    */
 
-    // FIXME: implement this
-    #[verifier(external_body)]
-    proof fn elim(tracked &self) -> (tracked out: ⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>)
-        ensures self.post()(out)
+    proof fn elim(tracked &'static self) -> (tracked out: ⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>)
     {
-        unimplemented!()
+        let tracked s2 = NewUbBox{
+            γsrv: self.γsrv,
+            acceptedEpoch: self.acceptedEpoch,
+            acceptedEpoch_p: self.acceptedEpoch_p,
+            newEpoch: self.newEpoch,
+            epoch_p: self.epoch_p, // unused at this level
+            HoldWand: self.HoldWand.dup()
+        };
+        return ⟦∀⟧::from(s2);
     }
 }
 
@@ -1257,15 +1347,16 @@ proof fn accepted_upper_bound_mono_epoch(
     let tracked Hacc_ro = Hwand.instantiate(acceptedEpoch_p).instantiate(());
     let tracked Hleft = ⟦∃⟧::exists(Seq::empty(), ((), Hacc_ro));
 
-    let tracked w = NewUbWand{
+    // produce the new □(∀ ...)
+    let tracked w = NewUbBox{
         γsrv: γsrv,
-        acceptedEpoch: acceptedEpoch_p,
+        acceptedEpoch: acceptedEpoch,
+        acceptedEpoch_p: acceptedEpoch_p,
         newEpoch: newEpoch,
-        oldWand: Hub.1
+        epoch_p: 0, // unused at this level
+        HoldWand: Hub.1
     };
     let tracked Hright = ⟦□⟧::from(w);
-    // want to produce a □ (∀ ...)
-    // let tracked Hright = Hub.1;
     let tracked Hub2 = (Hleft, Hright);
     return Hub2;
 }
