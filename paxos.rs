@@ -1527,5 +1527,30 @@ ensures
     mlist_ptsto_ro_lb_ineq(&Hacc_ub.0.destruct().1.1, &Hacc_lb);
 }
 
+proof fn accepted_upper_bound_lb2(
+    γsrv:mp_server_names,
+    acceptedEpoch:u64,
+    epoch:u64,
+    newEpoch:u64,
+    log:Seq<EntryType>,
+    log_p:Seq<EntryType>,
+    tracked Hacc_lb: ⟦is_accepted_lb⟧,
+    tracked Hacc_ub: ⟦is_accepted_upper_bound⟧,
+)
+requires
+  lt(acceptedEpoch, epoch),
+  lt(epoch, newEpoch),
+  holds(Hacc_lb, ⟨is_accepted_lb⟩(γsrv, epoch, log)),
+  holds(Hacc_ub, ⟨is_accepted_upper_bound⟩(γsrv, log_p, acceptedEpoch, newEpoch)),
+ensures
+  log.is_prefix_of(log_p)
+{
+    mlist_ptsto_ro_lb_ineq(
+        &Hacc_ub.1.elim().instantiate(epoch).instantiate(()),
+        &Hacc_lb
+    );
+}
+
+
 fn main() {}
 }
