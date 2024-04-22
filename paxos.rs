@@ -6,170 +6,6 @@ use std::vec::Vec;
 mod lock;
 
 verus! {
-
-const NUM_REPLICAS : u64 = 37;
-type StateType = u64;
-type Error = u64;
-const ENone : u64 = 0u64;
-const EEpochStale : u64 = 1u64;
-const ENotLeader : u64 = 2u64;
-
-////////////////////////////////////////////////////////////////////////////////
-// Acceptor
-
-struct AcceptorState {
-    epoch : u64,
-    accepted_epoch : u64,
-    next_index : u64,
-    state : StateType,
-}
-
-type AcceptorResource = u64;
-
-pub struct Acceptor {
-    mu: lock::Lock<(AcceptorState, Tracked<AcceptorResource>)>,
-}
-
-#[derive(Clone, Copy)]
-struct AcceptorApplyArgs {
-    epoch:u64,
-    next_index:u64,
-    state:StateType,
-}
-
-type AcceptorApplyReply = u64;
-
-impl Acceptor {
-    spec fn inv(self) -> bool {
-        forall |s| #[trigger] self.mu.get_pred()(s) <==> true // server_inv(s.0, s.1@)
-    }
-
-    fn apply(&self, args:AcceptorApplyArgs) -> (ret:AcceptorApplyReply)
-        requires self.inv()
-    {
-        let (mut s, mut res) = self.mu.lock();
-        let mut reply;
-
-        if s.epoch <= args.epoch {
-            if s.accepted_epoch == args.epoch {
-                if s.next_index < args.next_index {
-                    s.next_index = args.next_index;
-                    s.state = args.state;
-                    reply = ENone;
-                } else { // args.next_index < s.next_index
-                    reply = ENone;
-                }
-            } else { // s.accepted_epoch < args.epoch, because s.accepted_epoch <= s.epoch <= args.epoch
-                s.accepted_epoch = args.epoch;
-                s.epoch = args.epoch;
-                s.state = args.state;
-                s.next_index = args.next_index;
-                reply = ENone;
-            }
-        } else {
-            reply = EEpochStale;
-        }
-
-        self.mu.unlock((s, res));
-        return 0;
-    }
-
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Proposer
-
-struct ProposerState {
-    epoch : u64,
-    next_index : u64,
-    state : StateType,
-
-    is_leader : bool,
-    clerks : Vec<&'static Acceptor>,
-}
-
-type ProposerResource = u64;
-
-pub struct Proposer {
-    mu: lock::Lock<(ProposerState, Tracked<ProposerResource>)>,
-}
-
-spec fn proposer_inv(s:ProposerState, res:ProposerResource) -> bool {
-    &&& s.clerks@.len() == NUM_REPLICAS
-    &&& forall |j| 0 <= j < s.clerks.len() ==> #[trigger] s.clerks[j].inv()
-}
-
-pub struct Committer<'a> {
-    s: ProposerState,
-    res: Tracked<ProposerResource>,
-    p: &'a Proposer
-}
-
-impl Proposer {
-    spec fn inv(self) -> bool {
-        forall |s| #[trigger] self.mu.get_pred()(s) <==> proposer_inv(s.0, s.1@)
-    }
-
-    // TODO: take as input a "step" function
-    fn start<'a>(&'a self) -> (r:(u64, Committer<'a>))
-        requires self.inv()
-        ensures r.1.inv(r.0)
-    {
-        let (mut s, mut res) = self.mu.lock();
-        return (s.state, Committer {
-            s: s,
-            res: res,
-            p: self,
-        });
-    }
-}
-
-impl<'a> Committer<'a> {
-    spec fn inv(self, oldState:u64) -> bool {
-        self.p.inv() &&
-        self.s.state == oldState &&
-        proposer_inv(self.s, self.res@)
-    }
-
-    fn try_commit(self, newState:StateType, oldState:Ghost<StateType>) -> Error
-        requires self.inv(oldState@)
-    {
-        let mut s = self.s;
-        let mut res = self.res;
-        if !s.is_leader {
-            self.p.mu.unlock((s, res));
-            return ENotLeader;
-        }
-
-        let mut num_successes = 0u64;
-        let args = AcceptorApplyArgs{
-            epoch: s.epoch,
-            next_index: s.next_index,
-            state: newState,
-        };
-
-        let mut i : usize = 0;
-
-        while i < NUM_REPLICAS as usize
-            invariant
-              0 <= i <= NUM_REPLICAS,
-              0 <= num_successes <= i,
-        {
-            let reply = s.clerks[i].apply(args);
-            if reply == ENone {
-                num_successes += 1;
-            }
-            i += 1;
-        }
-
-        if 2*num_successes > NUM_REPLICAS {
-            return ENone
-        }
-        return EEpochStale
-    }
-
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // General definitions
 
@@ -2077,6 +1913,295 @@ ensures
 }
 
 // TODO: state and prove ghost_leader_propose
+
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+//  ____                       _                 _ 
+// |  _ \ __ ___  _____  ___  (_)_ __ ___  _ __ | |
+// | |_) / _` \ \/ / _ \/ __| | | '_ ` _ \| '_ \| |
+// |  __/ (_| |>  < (_) \__ \ | | | | | | | |_) | |
+// |_|   \__,_/_/\_\___/|___/ |_|_| |_| |_| .__/|_|
+//                                        |_|      
+////////////////////////////////////////////////////////////////////////////////
+   
+
+const NUM_REPLICAS : u64 = 37;
+type StateType = u64;
+type Error = u64;
+const ENone : u64 = 0u64;
+const EEpochStale : u64 = 1u64;
+const ENotLeader : u64 = 2u64;
+
+////////////////////////////////////////////////////////////////////////////////
+// Acceptor
+
+struct AcceptorState {
+    epoch : u64,
+    accepted_epoch : u64,
+    next_index : u64,
+    state : StateType,
+}
+
+type ⟦own_Acceptor⟧ = ⟦∃⟧<Seq<EntryType>, ⟦∗⟧<Pure, ⟦own_replica_ghost⟧>>;
+
+spec fn ⟨own_Acceptor⟩(config:Config, γsys:mp_system_names, γsrv:mp_server_names,
+                       x:AcceptorState) ->
+    spec_fn(⟦own_Acceptor⟧) -> bool
+{
+    ⟨∃⟩(|log:Seq<EntryType>|{
+        ⟨∗⟩(
+            ⌜ x.state == log.last() && x.next_index == log.len() ⌝,
+            ⟨own_replica_ghost⟩(config, γsys, γsrv, MPaxosState{
+                epoch: x.epoch,
+                accepted_epoch: x.accepted_epoch,
+                log: log
+            }
+        ))
+    })
+}
+
+pub struct Acceptor {
+    mu: lock::Lock<(AcceptorState, Tracked<⟦own_Acceptor⟧>)>,
+    ghost config: Config,
+    ghost γsys: mp_system_names,
+    ghost γsrv: mp_server_names,
+}
+
+#[derive(Clone, Copy)]
+struct AcceptorApplyArgs {
+    epoch:u64,
+    next_index:u64,
+    state:StateType,
+}
+
+type AcceptorApplyReply = u64;
+
+tracked struct ⟦apply_pre⟧ {
+    ghost log: Seq<EntryType>,
+    tracked Hprop_lb: ⟦is_proposal_lb⟧,
+    tracked Hprop_facts: ⟦is_proposal_facts⟧,
+}
+
+spec fn ⟨apply_pre⟩(a:Acceptor, args:AcceptorApplyArgs) ->
+    spec_fn(⟦apply_pre⟧) -> bool
+{
+    |res:⟦apply_pre⟧| {
+        holds(res.Hprop_lb, ⟨is_proposal_lb⟩(a.γsys, args.epoch, res.log)) &&
+        holds(res.Hprop_facts, ⟨is_proposal_facts⟩(a.config, a.γsys, args.epoch, res.log)) &&
+        res.log.last() == args.state &&
+        res.log.len() == args.next_index
+    }
+}
+
+type ⟦apply_post⟧ = ⟦∨⟧<Pure, ⟦is_accepted_lb⟧>;
+
+spec fn ⟨apply_post⟩(a:Acceptor, args:AcceptorApplyArgs, log:Seq<EntryType>, reply:AcceptorApplyReply) ->
+    spec_fn(⟦apply_post⟧) -> bool
+{
+    ⟨∨⟩(
+        ⌜ reply != 0 ⌝,
+        ⟨is_accepted_lb⟩(a.γsrv, args.epoch, log)
+    )
+}
+
+impl Acceptor {
+    spec fn inv(self)
+        -> bool
+    {
+        forall |s| #[trigger] self.mu.get_pred()(s) <==>
+            holds(s.1@, ⟨own_Acceptor⟩(self.config, self.γsys, self.γsrv, s.0))
+    }
+
+    fn apply(&self, args:AcceptorApplyArgs, Tracked(pre):Tracked<⟦apply_pre⟧>)
+        -> (ret:(AcceptorApplyReply, Tracked<⟦apply_post⟧>))
+        requires
+          self.inv(),
+          ⟨apply_pre⟩(*self, args)(pre)
+        ensures
+          holds(ret.1@, ⟨apply_post⟩(*self, args, pre.log, ret.0))
+    {
+        let (mut s, mut res) = self.mu.lock();
+        let tracked mut Hown = res.get();
+
+        let tracked (Ghost(log), (_, mut Hrep)) = Hown.destruct();
+        let Ghost(st) = Ghost(MPaxosState{
+            epoch: s.epoch,
+            accepted_epoch: s.accepted_epoch,
+            log: log
+        });
+        let Ghost(st_p) = Ghost(MPaxosState{
+            epoch: args.epoch,
+            accepted_epoch: args.epoch,
+            log: pre.log,
+        });
+
+        let tracked Hret;
+        if s.epoch <= args.epoch {
+            if s.accepted_epoch == args.epoch {
+                if s.next_index < args.next_index {
+                    proof {
+                        let st = MPaxosState{
+                            epoch: s.epoch,
+                            accepted_epoch: s.accepted_epoch,
+                            log: log
+                        };
+                        Hrep = ghost_replica_accept_same_epoch(
+                            self.config, self.γsys, self.γsrv,
+                            st, args.epoch, pre.log, Hrep,
+                            pre.Hprop_lb, pre.Hprop_facts
+                        );
+                        let tracked Hlb = ghost_replica_get_lb(self.config, self.γsys, self.γsrv,
+                                                               st_p, &Hrep);
+                        Hret = ⟦∨⟧::Right(Hlb);
+                        Hown = ⟦∃⟧::exists(pre.log, (Pure{}, Hrep));
+
+                    }
+                    s.next_index = args.next_index;
+                    s.state = args.state;
+                    self.mu.unlock((s, Tracked(Hown)));
+                    return (ENone, Tracked(Hret));
+                } else { // args.next_index < s.next_index
+                    proof {
+                        let tracked Hlb = ghost_replica_accept_same_epoch_old(
+                            self.config, self.γsys, self.γsrv, st, args.epoch,
+                            pre.log, &Hrep, &pre.Hprop_lb, &pre.Hprop_facts);
+                        Hret = ⟦∨⟧::Right(Hlb);
+                        Hown = ⟦∃⟧::exists(log, (Pure{}, Hrep));
+                    }
+                    self.mu.unlock((s, Tracked(Hown)));
+                    return (ENone, Tracked(Hret));
+                }
+            } else { // s.accepted_epoch < args.epoch, because s.accepted_epoch <= s.epoch <= args.epoch
+                proof {
+                    Hrep = ghost_replica_accept_new_epoch(
+                        self.config, self.γsys, self.γsrv,
+                        st, args.epoch, pre.log, Hrep,
+                        pre.Hprop_lb, pre.Hprop_facts
+                    );
+                    let tracked Hlb = ghost_replica_get_lb(self.config, self.γsys, self.γsrv,
+                                                           st_p, &Hrep);
+                    Hret = ⟦∨⟧::Right(Hlb);
+                    Hown = ⟦∃⟧::exists(pre.log, (Pure{}, Hrep));
+                }
+
+                s.accepted_epoch = args.epoch;
+                s.epoch = args.epoch;
+                s.state = args.state;
+                s.next_index = args.next_index;
+
+                self.mu.unlock((s, Tracked(Hown)));
+                return (ENone, Tracked(Hret));
+            }
+        } else {
+            proof {
+                Hown = ⟦∃⟧::exists(log, (Pure{}, Hrep));
+            }
+            self.mu.unlock((s, Tracked(Hown)));
+            return (EEpochStale, Tracked(⟦∨⟧::Left(Pure{})));
+        }
+    }
+
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Proposer
+
+struct ProposerState {
+    epoch : u64,
+    next_index : u64,
+    state : StateType,
+
+    is_leader : bool,
+    clerks : Vec<&'static Acceptor>,
+}
+
+type ProposerResource = u64;
+
+pub struct Proposer {
+    mu: lock::Lock<(ProposerState, Tracked<ProposerResource>)>,
+}
+
+spec fn proposer_inv(s:ProposerState, res:ProposerResource) -> bool {
+    &&& s.clerks@.len() == NUM_REPLICAS
+    &&& forall |j| 0 <= j < s.clerks.len() ==> #[trigger] s.clerks[j].inv()
+}
+
+pub struct Committer<'a> {
+    s: ProposerState,
+    res: Tracked<ProposerResource>,
+    p: &'a Proposer
+}
+
+impl Proposer {
+    spec fn inv(self) -> bool {
+        forall |s| #[trigger] self.mu.get_pred()(s) <==> proposer_inv(s.0, s.1@)
+    }
+
+    // TODO: take as input a "step" function
+    fn start<'a>(&'a self) -> (r:(u64, Committer<'a>))
+        requires self.inv()
+        ensures r.1.inv(r.0)
+    {
+        let (mut s, mut res) = self.mu.lock();
+        return (s.state, Committer {
+            s: s,
+            res: res,
+            p: self,
+        });
+    }
+}
+
+impl<'a> Committer<'a> {
+    spec fn inv(self, oldState:u64) -> bool {
+        self.p.inv() &&
+        self.s.state == oldState &&
+        proposer_inv(self.s, self.res@)
+    }
+
+    /*
+    fn try_commit(self, newState:StateType, oldState:Ghost<StateType>) -> Error
+        requires self.inv(oldState@)
+    {
+        let mut s = self.s;
+        let mut res = self.res;
+        if !s.is_leader {
+            self.p.mu.unlock((s, res));
+            return ENotLeader;
+        }
+
+        let mut num_successes = 0u64;
+        let args = AcceptorApplyArgs{
+            epoch: s.epoch,
+            next_index: s.next_index,
+            state: newState,
+        };
+
+        let mut i : usize = 0;
+
+        while i < NUM_REPLICAS as usize
+            invariant
+              0 <= i <= NUM_REPLICAS,
+              0 <= num_successes <= i,
+        {
+            let reply = s.clerks[i].apply(args);
+            if reply == ENone {
+                num_successes += 1;
+            }
+            i += 1;
+        }
+
+        if 2*num_successes > NUM_REPLICAS {
+            return ENone
+        }
+        return EEpochStale
+    }
+     */
+}
+
 
 fn main() {}
 }
