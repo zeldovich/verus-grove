@@ -283,6 +283,13 @@ trait exists_tr<X, ⟦A⟧> {
     ;
 }
 
+
+trait Duplicable {
+    proof fn dup(tracked &self) -> (tracked r:Self) where Self: std::marker::Sized
+        ensures r == self;
+}
+
+
 /// ∃ x, A(x); modeled as a dyn exists_tr.
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(X)]
@@ -319,10 +326,31 @@ spec fn ⟨∃⟩<X,⟦A⟧>(⟨A⟩:spec_fn(x:X) -> spec_fn(out:⟦A⟧) -> boo
     }
 }
 
-trait Duplicable {
-    proof fn dup(tracked &self) -> (tracked r:Self) where Self: std::marker::Sized
-        ensures r == self;
+impl<X, ⟦A⟧:Duplicable> Duplicable for ⟦∃⟧<X,⟦A⟧> {
+    #[verifier(external_body)]
+    proof fn dup(tracked &self) -> (tracked r:Self)
+    {
+        unimplemented!()
+    }
 }
+
+impl<⟦A⟧:Duplicable, ⟦B⟧:Duplicable> Duplicable for ⟦∗⟧<⟦A⟧,⟦B⟧> {
+    proof fn dup(tracked &self) -> (tracked r:Self)
+    {
+        return (self.0.dup(), self.1.dup());
+    }
+}
+
+// FIXME: causes Verus crash
+impl Duplicable for Pure {
+    proof fn dup(tracked &self) -> (tracked r:Pure)
+    {
+        let tracked x = ();
+        return x;
+    }
+}
+
+/*
 
 /// □ P
 trait □_tr<⟦P⟧> {
@@ -905,11 +933,15 @@ impl Duplicable for ⟦is_committed_by⟧ {
     }
 }
 
+spec fn lt(a:u64, b:u64) -> bool {
+    a < b
+}
 
+// TODO: uncurry the wand
 type ⟦old_proposal_max⟧ =
     ⟦□⟧<⟦∀⟧<(u64, Seq<EntryType>),
-        ⟦-∗⟧<Pure, 
-            ⟦-∗⟧<⟦is_committed_by⟧, Pure>>>>;
+        ⟦-∗⟧<⟦∗⟧<Pure, ⟦is_committed_by⟧>, Pure>>>;
+
 spec fn ⟨old_proposal_max⟩(config:Set<mp_server_names>, γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>)
     -> spec_fn(⟦old_proposal_max⟧) -> bool {
     ⟨□⟩(
@@ -917,10 +949,8 @@ spec fn ⟨old_proposal_max⟩(config:Set<mp_server_names>, γsys:mp_system_name
             let epoch_old = f.0;
             let σ_old = f.1;
             ⟨-∗⟩(
-              ⌜ epoch_old < epoch ⌝,
-              ⟨-∗⟩(
-                ⟨is_committed_by⟩(config, epoch_old, σ_old),
-                ⌜ σ_old.is_prefix_of(σ) ⌝))
+              ⟨∗⟩(⌜ lt(epoch_old, epoch) ⌝, ⟨is_committed_by⟩(config, epoch_old, σ_old)),
+                ⌜ σ_old.is_prefix_of(σ) ⌝)
         }
     )
     )
@@ -957,9 +987,6 @@ spec fn ⟨is_proposal_facts⟩(config:Set<mp_server_names>, γsys:mp_system_nam
 type ⟦is_accepted_upper_bound⟧ =
 ⟦∗⟧<⟦∃⟧<Seq<EntryType>, ⟦∗⟧<Pure, ⟦is_accepted_ro⟧,>>,
     ⟦□⟧<⟦∀⟧<u64, ⟦-∗⟧<Pure, ⟦is_accepted_ro⟧>>>>;
-spec fn lt(a:u64, b:u64) -> bool {
-    a < b
-}
 spec fn ⟨is_accepted_upper_bound⟩(γsrv:mp_server_names, log:Seq<EntryType>, acceptedEpoch:u64, newEpoch:u64)
                                   -> spec_fn(⟦is_accepted_upper_bound⟧) -> bool
 {
@@ -974,6 +1001,17 @@ spec fn ⟨is_accepted_upper_bound⟩(γsrv:mp_server_names, log:Seq<EntryType>,
             )
     })))
 }
+/*
+impl Duplicable for ⟦is_accepted_upper_bound⟧ {
+    proof fn dup(tracked &self) -> (tracked r:Self) {
+        let tracked s2 = (
+            self.0.dup(),
+            self.1.dup()
+        );
+        return s2;
+    }
+}
+*/
 
 
 struct ⟦own_replica_ghost⟧ {
@@ -1219,14 +1257,12 @@ proof fn ghost_commit(
     {
         if epoch < epoch_commit {
             Hown.Hprop_facts.0.dup().elim().instantiate((epoch, σ))
-            .instantiate(())
-            .instantiate(Hcom.dup());
+            .instantiate(((), Hcom.dup()));
         } else if epoch == epoch_commit {
             mlist_ptsto_lb_comparable(&Hprop_lb, &Hown.Hprop_lb);
         } else {
             Hprop_facts.0.dup().elim().instantiate((epoch_commit, σcommit))
-            .instantiate(())
-            .instantiate(Hown.Hcommit_by.dup());
+            .instantiate(((), (Hown.Hcommit_by.dup())));
         }
         assert(σcommit.is_prefix_of(σ) || σ.is_prefix_of(σcommit));
     }
@@ -1460,7 +1496,7 @@ proof fn get_proposal_from_votes(
     tracked Hinv: ⟦is_vote_inv⟧,
     tracked Hvotes: ⟦[∗ set]⟧<mp_server_names, ⟦own_vote_tok⟧>,
 )
--> (Hret:⟦own_proposal⟧)
+-> (tracked Hret:⟦own_proposal⟧)
 requires
   old(E)@.contains(replN),
   config.finite(),
@@ -1551,6 +1587,163 @@ ensures
     );
 }
 
+struct ⟦own_leader_ghost⟧ {
+    Hprop: ⟦own_proposal⟧,
+    Hprop_facts: ⟦is_proposal_facts⟧,
+}
+
+spec fn ⟨own_leader_ghost⟩(config:Config, γsys:mp_system_names, st:MPaxosState)
+    -> spec_fn(⟦own_leader_ghost⟧) -> bool
+{
+    |res:⟦own_leader_ghost⟧| {
+        holds(res.Hprop, ⟨own_proposal⟩(γsys, st.epoch, st.log)) &&
+        holds(res.Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, st.epoch, st.log))
+    }
+}
+
+
+tracked struct OldPropMaxClosure {
+    ghost config:Config,
+    ghost γsys: mp_system_names,
+    ghost acceptedEpoch: u64,
+    ghost newEpoch: u64,
+    ghost latestLog:Seq<EntryType>,
+    ghost W:Set<mp_server_names>,
+
+    ghost epoch_old: u64, // unused at ∀
+    ghost σ_old: Seq<EntryType>, // unused at ∀
+
+    tracked Hprev : ⟦old_proposal_max⟧,
+    tracked Hacc: ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_upper_bound⟧>,
+}
+impl OldPropMaxClosure {
+    spec fn concrete_inv(&self) -> bool {
+        holds(self.Hprev, ⟨old_proposal_max⟩(self.config, self.γsys, self.acceptedEpoch, self.latestLog)) &&
+        holds(self.Hacc, ⟨[∗ set]⟩(self.W, |γsrv|
+                              ⟨is_accepted_upper_bound⟩(γsrv, self.latestLog,
+                                                        self.acceptedEpoch, self.newEpoch)))
+    }
+}
+
+
+type oldPropWand = ⟦-∗⟧<⟦∗⟧<Pure, ⟦is_committed_by⟧>, Pure>;
+impl ∀_tr<(u64, Seq<EntryType>), oldPropWand> for OldPropMaxClosure {
+    spec fn inv(&self) -> bool {
+        self.concrete_inv()
+    }
+
+    spec fn post(&self) -> spec_fn((u64, Seq<EntryType>)) ->
+        spec_fn(oldPropWand) -> bool
+    {
+        |f:(u64, Seq<_>)| {
+            let (epoch_old, σ_old) = f;
+        ⟨-∗⟩(
+            ⟨∗⟩(⌜ lt(epoch_old, self.newEpoch) ⌝, ⟨is_committed_by⟩(self.config, epoch_old, σ_old)),
+            ⌜ σ_old.is_prefix_of(self.latestLog) ⌝)
+        }
+    }
+
+    proof fn instantiate(tracked self, x:(u64, Seq<EntryType>))
+        -> (tracked ret:oldPropWand)
+    {
+        assert(false);
+        return false_to_anything();
+    }
+}
+
+type oldPropForall = ⟦∀⟧<(u64, Seq<EntryType>), ⟦-∗⟧<⟦∗⟧<Pure, ⟦is_committed_by⟧>, Pure>>;
+impl □_tr<oldPropForall> for OldPropMaxClosure {
+    spec fn inv(&self) -> bool {
+        self.concrete_inv()
+    }
+
+    spec fn post(&self) ->
+        spec_fn(oldPropForall) -> bool
+    {  // copied from old_proposal_max defn
+    ⟨∀⟩(|f:(u64,Seq<EntryType>)| {
+            let epoch_old = f.0;
+            let σ_old = f.1;
+            ⟨-∗⟩(
+              ⟨∗⟩(⌜ lt(epoch_old, self.newEpoch) ⌝, ⟨is_committed_by⟩(self.config, epoch_old, σ_old)),
+                ⌜ σ_old.is_prefix_of(self.latestLog) ⌝)
+        })
+    }
+
+    proof fn elim(tracked &'static self) -> (tracked out: oldPropForall)
+    {
+        let tracked c2 = OldPropMaxClosure {
+            config: self.config,
+            γsys: self.γsys,
+            acceptedEpoch: self.acceptedEpoch,
+            newEpoch: self.newEpoch,
+            latestLog: self.latestLog,
+            W: self.W,
+            epoch_old: self.epoch_old,
+            σ_old: self.σ_old,
+            Hprev: self.Hprev.dup(),
+            Hacc: self.Hacc.dup(),
+        };
+        return false_to_anything();
+        // return ⟦∀⟧::from(c2);
+    }
+}
+proof fn become_leader(
+    tracked E: &mut inv_mask,
+    config: Config,
+    γsys: mp_system_names,
+    W: Set<mp_server_names>,
+    latestLog:Seq<EntryType>,
+    acceptedEpoch: u64,
+    newEpoch: u64,
+    tracked Hlc: ⟦£⟧,
+    tracked Hinv : ⟦is_vote_inv⟧,
+    tracked Hacc: ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_upper_bound⟧>,
+    tracked Hprop_lb: ⟦is_proposal_lb⟧,
+    tracked Hprop_facts: ⟦is_proposal_facts⟧,
+    tracked Hvotes: ⟦[∗ set]⟧<mp_server_names, ⟦own_vote_tok⟧>,
+)
+->
+(Hout:⟦own_leader_ghost⟧)
+requires
+  old(E)@.contains(replN),
+  config.finite(),
+  W.finite(),
+  W.subset_of(config),
+  2 * W.len() > config.len(),
+  holds(Hlc, ⟨£⟩(1)),
+  holds(Hinv, ⟨is_vote_inv⟩(config, γsys)),
+  holds(Hacc, ⟨[∗ set]⟩(W, |γsrv| ⟨is_accepted_upper_bound⟩(γsrv, latestLog, acceptedEpoch, newEpoch))),
+  holds(Hprop_lb, ⟨is_proposal_lb⟩(γsys, acceptedEpoch, latestLog)),
+  holds(Hprop_facts, ⟨is_proposal_facts⟩(config, γsys, acceptedEpoch, latestLog)),
+  holds(Hvotes, ⟨[∗ set]⟩(W, |γsrv| ⟨own_vote_tok⟩(γsrv, newEpoch))),
+ensures
+  old(E)@ == E@,
+  holds(Hout, ⟨own_leader_ghost⟩(config, γsys, MPaxosState{epoch:newEpoch,
+                                                           accepted_epoch:newEpoch,
+                                                           log:latestLog})),
+{
+    let tracked mut Hprop = get_proposal_from_votes(E, config, γsys, W, newEpoch, Hlc, Hinv, Hvotes);
+    Hprop = mlist_ptsto_update(latestLog, Hprop);
+    let tracked (Hmax, Hvalid) = Hprop_facts;
+
+    let tracked Hclos = OldPropMaxClosure {
+        config: config,
+        γsys: γsys,
+        acceptedEpoch: acceptedEpoch,
+        newEpoch: newEpoch,
+        latestLog: latestLog,
+        epoch_old: 0,
+        σ_old: Seq::empty(),
+        W: W,
+        Hprev: Hmax,
+        Hacc: Hacc,
+    };
+    let tracked HnewMax = ⟦□⟧::from(Hclos);
+    return ⟦own_leader_ghost⟧{
+        Hprop: Hprop,
+        Hprop_facts: (HnewMax, Hvalid),
+    }
+}*/
 
 fn main() {}
 }
