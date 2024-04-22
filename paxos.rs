@@ -1361,5 +1361,27 @@ proof fn accepted_upper_bound_mono_epoch(
     return Hub2;
 }
 
+proof fn accepted_upper_bound_mono_log(
+    γsrv:mp_server_names,
+    log: Seq<EntryType>,
+    log_p: Seq<EntryType>,
+    acceptedEpoch:u64,
+    newEpoch:u64,
+    tracked Hub: ⟦is_accepted_upper_bound⟧,
+) ->
+(tracked ret: ⟦is_accepted_upper_bound⟧)
+  requires
+    log.is_prefix_of(log_p),
+    holds(Hub, ⟨is_accepted_upper_bound⟩(γsrv, log, acceptedEpoch, newEpoch)),
+  ensures
+    holds(ret, ⟨is_accepted_upper_bound⟩(γsrv, log_p, acceptedEpoch, newEpoch)),
+{
+    let tracked mut Hub = Hub;
+    // Just have to put logPrefix in context so transitivity can be applied.
+    let tracked (Ghost(logPrefix), Hro) = Hub.0.destruct();
+    Hub = (⟦∃⟧::exists(logPrefix, Hro), Hub.1);
+    return Hub;
+}
+
 fn main() {}
 }
