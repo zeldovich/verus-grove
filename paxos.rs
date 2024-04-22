@@ -146,7 +146,8 @@ impl Proposer {
 // General definitions
 
 type True = ();
-type Pure = ();
+struct Pure { // () doesn't work b/c of Verus bug
+}
 
 /// P ∗ Q
 type ⟦∗⟧<⟦P⟧,⟦Q⟧> = (⟦P⟧, ⟦Q⟧);
@@ -341,16 +342,12 @@ impl<⟦A⟧:Duplicable, ⟦B⟧:Duplicable> Duplicable for ⟦∗⟧<⟦A⟧,�
     }
 }
 
-// FIXME: causes Verus crash
 impl Duplicable for Pure {
     proof fn dup(tracked &self) -> (tracked r:Pure)
     {
-        let tracked x = ();
-        return x;
+        return Pure{};
     }
 }
-
-/*
 
 /// □ P
 trait □_tr<⟦P⟧> {
@@ -534,7 +531,7 @@ proof fn inv_open<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool,
       ⟨P⟩(r.0),
       ⟨inv_closer⟩(E@, N, ⟨P⟩)(r.1)
 {
-    let tracked (P, Hclose) = Hi.dup().elim().instantiate(E@).instantiate(()).
+    let tracked (P, Hclose) = Hi.dup().elim().instantiate(E@).instantiate(Pure{}).
         instantiate(Hlc).elim(E);
     return (P, Hclose);
 }
@@ -906,31 +903,18 @@ spec fn ⟨is_commit_lb⟩(γsys:mp_system_names, σ:Seq<EntryType>) ->
 
 type Config = Set<mp_server_names>;
 
-struct ⟦is_committed_by⟧ {
-    Hacc_lbs : ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_lb⟧>
-}
-#[verifier::opaque]
-spec fn W_trigger(W:Set<mp_server_names>) -> bool { true }
+type ⟦is_committed_by⟧ = ⟦∃⟧<Set<mp_server_names>, ⟦∗⟧<Pure, ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_lb⟧>>>;
+
 spec fn ⟨is_committed_by⟩(config:Config, epoch:u64, σ:Seq<EntryType>)
     -> spec_fn(⟦is_committed_by⟧) -> bool
 {
-    |res:⟦is_committed_by⟧| {
-    exists |W:Set<mp_server_names>| {
-        #[trigger] W_trigger(W) &&
-        W.subset_of(config) &&
-        2 * W.len() > config.len() &&
-        holds(
-            res.Hacc_lbs,
-            ⟨[∗ set]⟩(W, |γsrv| ⟨is_accepted_lb⟩(γsrv, epoch, σ))
-        )
-    }}
-}
-impl Duplicable for ⟦is_committed_by⟧ {
-    proof fn dup(tracked &self) -> (tracked r:Self) {
-        return ⟦is_committed_by⟧ {
-            Hacc_lbs: self.Hacc_lbs.dup()
-        };
+    ⟨∃⟩(|W:Set<mp_server_names>| {
+      ⟨∗⟩(
+          ⌜ is_quorum(config, W) ⌝,
+          ⟨[∗ set]⟩(W, |γsrv| ⟨is_accepted_lb⟩(γsrv, epoch, σ))
+      )
     }
+    )
 }
 
 spec fn lt(a:u64, b:u64) -> bool {
@@ -1104,7 +1088,7 @@ proof fn ghost_replica_accept_same_epoch(
     Hown.Hacc_lb = mlist_ptsto_get_lb(γsrv.accepted_gn, epoch_p, log_p, &Hown.Hacc);
     Hown.Hprop_lb = Hprop_lb;
     Hown.Hprop_facts = Hprop_facts;
-    Hown.Hacc_ub = ⟦or⟧::Left(());
+    Hown.Hacc_ub = ⟦or⟧::Left(Pure{});
     return Hown;
 }
 
@@ -1161,7 +1145,7 @@ proof fn ghost_replica_accept_new_epoch(
     let st_p = MPaxosState{epoch:epoch_p, accepted_epoch:epoch_p, log:log_p};
     Hown.Hprop_lb = Hprop_lb;
     Hown.Hprop_facts = Hprop_facts;
-    Hown.Hacc_ub = ⟦or⟧::Left(());
+    Hown.Hacc_ub = ⟦or⟧::Left(Pure{});
     if st.epoch < epoch_p {
         Hown.Hunused.contents.tracked_remove_keys(Set::new(|e:u64| st.epoch < e < st_p.epoch));
         let tracked mut Hacc = Hown.Hunused.contents.tracked_remove(epoch_p);
@@ -1256,13 +1240,13 @@ proof fn ghost_commit(
 
     {
         if epoch < epoch_commit {
-            Hown.Hprop_facts.0.dup().elim().instantiate((epoch, σ))
-            .instantiate(((), Hcom.dup()));
+            Hown.Hprop_facts.0.dup().elim().instantiate((epoch, σ)).
+                instantiate((Pure{}, Hcom.dup()));
         } else if epoch == epoch_commit {
             mlist_ptsto_lb_comparable(&Hprop_lb, &Hown.Hprop_lb);
         } else {
-            Hprop_facts.0.dup().elim().instantiate((epoch_commit, σcommit))
-            .instantiate(((), (Hown.Hcommit_by.dup())));
+            Hprop_facts.0.dup().elim().instantiate((epoch_commit, σcommit)).
+                instantiate((Pure{}, (Hown.Hcommit_by.dup())));
         }
         assert(σcommit.is_prefix_of(σ) || σ.is_prefix_of(σcommit));
     }
@@ -1280,7 +1264,7 @@ proof fn ghost_commit(
         let tracked mut Hown = Hown; // XXX: due to Verus unsupported 
         let tracked Hprop_valid = Hprop_facts.1.dup().elim();
         let tracked Hcommit = Hprop_valid.instantiate(σcommit).
-            instantiate(()).
+            instantiate(Pure{}).
             instantiate(Hown.Hcommit).
             elim(E);
         let tracked Hlb = mlist_ptsto_half_get_lb(&Hcommit);
@@ -1344,7 +1328,7 @@ impl wand_tr<Pure, ⟦is_accepted_ro⟧> for NewUbBox {
     }
 
     proof fn instantiate(tracked self, tracked i:Pure) -> (tracked out:⟦is_accepted_ro⟧) {
-        return self.HoldWand.elim().instantiate(self.epoch_p).instantiate(());
+        return self.HoldWand.elim().instantiate(self.epoch_p).instantiate(Pure{});
     }
 }
 
@@ -1416,8 +1400,8 @@ proof fn accepted_upper_bound_mono_epoch(
     holds(ret, ⟨is_accepted_upper_bound⟩(γsrv, Seq::empty(), acceptedEpoch_p, newEpoch)),
 {
     let tracked Hwand = Hub.1.dup().elim();
-    let tracked Hacc_ro = Hwand.instantiate(acceptedEpoch_p).instantiate(());
-    let tracked Hleft = ⟦∃⟧::exists(Seq::empty(), ((), Hacc_ro));
+    let tracked Hacc_ro = Hwand.instantiate(acceptedEpoch_p).instantiate(Pure{});
+    let tracked Hleft = ⟦∃⟧::exists(Seq::empty(), (Pure{}, Hacc_ro));
 
     // produce the new □(∀ ...)
     let tracked w = NewUbBox{
@@ -1455,6 +1439,34 @@ proof fn accepted_upper_bound_mono_log(
     return Hub;
 }
 
+
+spec fn is_quorum(config:Config, W:Set<mp_server_names>) -> bool {
+    config.finite() &&
+    W.finite() &&
+    2 * W.len() > config.len() &&
+    W.subset_of(config)
+}
+
+proof fn quorum_intersection(config:Config, W1:Set<mp_server_names>, W2:Set<mp_server_names>)
+  -> (ret:mp_server_names)
+requires
+  is_quorum(config, W1),
+  is_quorum(config, W2),
+ensures
+  W1.contains(ret),
+  W2.contains(ret)
+{
+    lemma_len_subset(W1+W2, config);
+    if W2.disjoint(W1) {
+        lemma_set_disjoint_lens(W1, W2);
+        return false_to_anything();
+    }
+    let common = (W1*W2).choose();
+    lemma_set_properties::<mp_server_names>();
+    lemma_set_intersect_union_lens(W1, W2);
+    return common;
+}
+
 type ⟦is_vote_inv_inner⟧ = 
   ⟦[∗ set]⟧<u64, 
    ⟦∨⟧<⟦∃⟧<Set<mp_server_names>,
@@ -1463,14 +1475,13 @@ type ⟦is_vote_inv_inner⟧ =
        ⟦own_proposal⟧
     >
 >;
-
 spec fn ⟨is_vote_inv_inner⟩(config:Config, γsys:mp_system_names)
     -> spec_fn(⟦is_vote_inv_inner⟧) -> bool
 {
     ⟨[∗ set]⟩(Set::new(|_e| true),
     |e:u64| {
         ⟨∨⟩(
-            ⟨∃⟩(|W:Set<_>| ⟨∗⟩(⌜ W.finite() && 2 * W.len() > config.len() && W.subset_of(config) ⌝,
+            ⟨∃⟩(|W:Set<_>| ⟨∗⟩(⌜ is_quorum(config, W) ⌝,
                                ⟨[∗ set]⟩(W, |γsrv| ⟨own_vote_tok⟩(γsrv, e))
             )),
             ⟨own_proposal⟩(γsys, e, Seq::empty())
@@ -1499,10 +1510,7 @@ proof fn get_proposal_from_votes(
 -> (tracked Hret:⟦own_proposal⟧)
 requires
   old(E)@.contains(replN),
-  config.finite(),
-  W.finite(),
-  2 * W.len() > config.len(),
-  W.subset_of(config),
+  is_quorum(config, W),
   holds(Hlc, ⟨£⟩(1)),
   holds(Hinv, ⟨is_vote_inv⟩(config, γsys)),
   holds(Hvotes, ⟨[∗ set]⟩(W, |γsrv| ⟨own_vote_tok⟩(γsrv, newEpoch))),
@@ -1518,26 +1526,14 @@ ensures
         let tracked (Ghost(W2), Hvotes2) = Hbad.destruct();
         let tracked mut Hvotes2 = Hvotes2.1;
         let tracked mut Hvotes = Hvotes;
-        lemma_len_subset(W+W2, config);
-        if W2.disjoint(W) {
-            lemma_set_disjoint_lens(W, W2);
-            return false_to_anything();
-        }
-        // assert(!W2.disjoint(W));
-        let commonAcceptor = (W*W2).choose();
-        lemma_set_properties::<mp_server_names>();
-        lemma_set_intersect_union_lens(W, W2);
-        // assert( (W*W2).len() == W.len() + W2.len() - (W+W2).len() );
-        // assert( (W*W2).len() > 0);
-        // assert((W*W2).contains(commonAcceptor));
-        // assert(W.contains(commonAcceptor));
+        let commonAcceptor = quorum_intersection(config, W, W2);
         let tracked Hvote1 = Hvotes2.contents.tracked_remove(commonAcceptor);
         let tracked Hvote2 = Hvotes.contents.tracked_remove(commonAcceptor);
         tok_tok_false(Hvote1, Hvote2);
         return false_to_anything();
     } else if let ⟦∨⟧::Right(Hprop) = Hprop {
         Hi.contents.tracked_insert(newEpoch, ⟦∨⟧::Left(
-            ⟦∃⟧::exists(W, ((), Hvotes))));
+            ⟦∃⟧::exists(W, (Pure{}, Hvotes))));
         inv_close(replN, ⟨is_vote_inv_inner⟩(config, γsys), E, Hi, Hclose);
         return Hprop;
     }
@@ -1582,7 +1578,7 @@ ensures
   log.is_prefix_of(log_p)
 {
     mlist_ptsto_ro_lb_ineq(
-        &Hacc_ub.1.elim().instantiate(epoch).instantiate(()),
+        &Hacc_ub.1.elim().instantiate(epoch).instantiate(Pure{}),
         &Hacc_lb
     );
 }
@@ -1618,6 +1614,7 @@ tracked struct OldPropMaxClosure {
 }
 impl OldPropMaxClosure {
     spec fn concrete_inv(&self) -> bool {
+        is_quorum(self.config, self.W) &&
         holds(self.Hprev, ⟨old_proposal_max⟩(self.config, self.γsys, self.acceptedEpoch, self.latestLog)) &&
         holds(self.Hacc, ⟨[∗ set]⟩(self.W, |γsrv|
                               ⟨is_accepted_upper_bound⟩(γsrv, self.latestLog,
@@ -1625,6 +1622,53 @@ impl OldPropMaxClosure {
     }
 }
 
+impl wand_tr<⟦∗⟧<Pure, ⟦is_committed_by⟧>, Pure> for OldPropMaxClosure {
+    spec fn inv(&self) -> bool {
+        self.concrete_inv()
+    }
+
+    spec fn pre(&self) -> spec_fn(⟦∗⟧<Pure, ⟦is_committed_by⟧>) -> bool
+    {
+        ⟨∗⟩(
+            ⌜ lt(self.epoch_old, self.newEpoch)  ⌝,
+            ⟨is_committed_by⟩(self.config, self.epoch_old, self.σ_old)
+        )
+    }
+
+    spec fn post(&self) -> spec_fn(Pure) -> bool
+    {
+        ⌜ self.σ_old.is_prefix_of(self.latestLog) ⌝
+    }
+
+    proof fn instantiate(tracked self, tracked Hpre:⟦∗⟧<Pure, ⟦is_committed_by⟧>)
+        -> (tracked Hpost:Pure)
+    {
+        let tracked mut s = self;
+        // This is the core of the become_leader proof
+        if s.epoch_old < s.acceptedEpoch {
+            // use prev
+            s.Hprev.elim().instantiate((s.epoch_old, s.σ_old)).
+                instantiate(Hpre);
+            return Pure{};
+        }
+        // quorum intersection
+        let tracked (Ghost(W2), mut Haccs) = Hpre.1.destruct();
+        let commonAcceptor = quorum_intersection(s.config, s.W, W2);
+
+        let tracked mut Haccs = Haccs.1;
+        let tracked Hacc_lb = Haccs.contents.tracked_remove(commonAcceptor);
+        let tracked Hacc_ub = s.Hacc.contents.tracked_remove(commonAcceptor);
+
+        if s.acceptedEpoch == s.epoch_old {
+            accepted_upper_bound_lb(commonAcceptor, s.acceptedEpoch, s.newEpoch, s.σ_old, s.latestLog,
+                                    Hacc_lb, Hacc_ub);
+        } else {
+            accepted_upper_bound_lb2(commonAcceptor, s.acceptedEpoch, s.epoch_old,
+                                     s.newEpoch, s.σ_old, s.latestLog, Hacc_lb, Hacc_ub);
+        }
+        return Pure{};
+    }
+}
 
 type oldPropWand = ⟦-∗⟧<⟦∗⟧<Pure, ⟦is_committed_by⟧>, Pure>;
 impl ∀_tr<(u64, Seq<EntryType>), oldPropWand> for OldPropMaxClosure {
@@ -1646,8 +1690,10 @@ impl ∀_tr<(u64, Seq<EntryType>), oldPropWand> for OldPropMaxClosure {
     proof fn instantiate(tracked self, x:(u64, Seq<EntryType>))
         -> (tracked ret:oldPropWand)
     {
-        assert(false);
-        return false_to_anything();
+        let tracked mut s = self;
+        s.epoch_old = x.0;
+        s.σ_old = x.1;
+        return ⟦-∗⟧::from(s);
     }
 }
 
@@ -1683,8 +1729,7 @@ impl □_tr<oldPropForall> for OldPropMaxClosure {
             Hprev: self.Hprev.dup(),
             Hacc: self.Hacc.dup(),
         };
-        return false_to_anything();
-        // return ⟦∀⟧::from(c2);
+        return ⟦∀⟧::from(c2);
     }
 }
 proof fn become_leader(
@@ -1743,7 +1788,7 @@ ensures
         Hprop: Hprop,
         Hprop_facts: (HnewMax, Hvalid),
     }
-}*/
+}
 
 fn main() {}
 }
