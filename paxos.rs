@@ -1,6 +1,7 @@
 #![verifier::loop_isolation(false)]
 #![allow(non_camel_case_types)]
 use vstd::{prelude::*};
+use vstd::{set_lib::*};
 use std::vec::Vec;
 mod lock;
 
@@ -535,7 +536,29 @@ type gname = nat;
 #[verifier(external_body)]
 struct ⟦tok_points_to⟧ {
 }
-spec fn ⟨tok_points_to⟩(γ:gname, k:u64) -> spec_fn(⟦tok_points_to⟧) -> bool;
+impl ⟦tok_points_to⟧ {
+    spec fn γ(&self) -> gname;
+    spec fn k(&self) -> u64;
+}
+spec fn ⟨tok_points_to⟩(γ:gname, k:u64) -> spec_fn(⟦tok_points_to⟧) -> bool {
+    |res:⟦tok_points_to⟧| {
+        &&& res.γ() == γ
+        &&& res.k() == k
+    }
+}
+
+#[verifier(external_body)]
+proof fn tok_tok_false(
+    tracked Hptsto1:⟦tok_points_to⟧,
+    tracked Hptsto2:⟦tok_points_to⟧,
+)
+requires
+  Hptsto1.γ() == Hptsto2.γ(),
+  Hptsto1.k() == Hptsto2.k(),
+ensures
+  false
+{ unimplemented!() }
+
 
 
 #[verifier(external_body)]
@@ -1382,6 +1405,97 @@ proof fn accepted_upper_bound_mono_log(
     Hub = (⟦∃⟧::exists(logPrefix, Hro), Hub.1);
     return Hub;
 }
+
+type ⟦is_vote_inv_inner⟧ = 
+  ⟦[∗ set]⟧<u64, 
+   ⟦∨⟧<⟦∃⟧<Set<mp_server_names>,
+         ⟦∗⟧<Pure, ⟦[∗ set]⟧<mp_server_names, ⟦own_vote_tok⟧>>
+        >,
+       ⟦own_proposal⟧
+    >
+>;
+
+spec fn ⟨is_vote_inv_inner⟩(config:Config, γsys:mp_system_names)
+    -> spec_fn(⟦is_vote_inv_inner⟧) -> bool
+{
+    ⟨[∗ set]⟩(Set::new(|_e| true),
+    |e:u64| {
+        ⟨∨⟩(
+            ⟨∃⟩(|W:Set<_>| ⟨∗⟩(⌜ W.finite() && 2 * W.len() > config.len() && W.subset_of(config) ⌝,
+                               ⟨[∗ set]⟩(W, |γsrv| ⟨own_vote_tok⟩(γsrv, e))
+            )),
+            ⟨own_proposal⟩(γsys, e, Seq::empty())
+        )
+    }
+    )
+}
+
+type ⟦is_vote_inv⟧ = ⟦inv⟧<⟦is_vote_inv_inner⟧>;
+spec fn ⟨is_vote_inv⟩(config:Set<mp_server_names>, γsys:mp_system_names)
+    -> spec_fn(⟦is_vote_inv⟧) -> bool
+{
+    ⟨inv⟩(replN, ⟨is_vote_inv_inner⟩(config, γsys))
+}
+
+proof fn get_proposal_from_votes(
+    tracked E:&mut inv_mask,
+    config:Config,
+    γsys:mp_system_names,
+    W:Set<mp_server_names>,
+    newEpoch:u64,
+    tracked Hlc: ⟦£⟧,
+    tracked Hinv: ⟦is_vote_inv⟧,
+    tracked Hvotes: ⟦[∗ set]⟧<mp_server_names, ⟦own_vote_tok⟧>,
+)
+-> (Hret:⟦own_proposal⟧)
+requires
+  old(E)@.contains(replN),
+  config.finite(),
+  W.finite(),
+  2 * W.len() > config.len(),
+  W.subset_of(config),
+  holds(Hlc, ⟨£⟩(1)),
+  holds(Hinv, ⟨is_vote_inv⟩(config, γsys)),
+  holds(Hvotes, ⟨[∗ set]⟩(W, |γsrv| ⟨own_vote_tok⟩(γsrv, newEpoch))),
+ensures
+  old(E)@ == E@,
+  holds(Hret, ⟨own_proposal⟩(γsys, newEpoch, Seq::empty())),
+{
+    broadcast use Finite::set_is_finite; // XXX: needed for big_sepS
+    let tracked (mut Hi, Hclose) = inv_open(replN, ⟨is_vote_inv_inner⟩(config, γsys), E, Hinv, Hlc);
+    let tracked mut Hprop = Hi.contents.tracked_remove(newEpoch);
+    if let ⟦∨⟧::Left(Hbad) = Hprop {
+        // quorum intersection contradiction
+        let tracked (Ghost(W2), Hvotes2) = Hbad.destruct();
+        let tracked mut Hvotes2 = Hvotes2.1;
+        let tracked mut Hvotes = Hvotes;
+        lemma_len_subset(W+W2, config);
+        if W2.disjoint(W) {
+            lemma_set_disjoint_lens(W, W2);
+            return false_to_anything();
+        }
+        // assert(!W2.disjoint(W));
+        let commonAcceptor = (W*W2).choose();
+        lemma_set_properties::<mp_server_names>();
+        lemma_set_intersect_union_lens(W, W2);
+        // assert( (W*W2).len() == W.len() + W2.len() - (W+W2).len() );
+        // assert( (W*W2).len() > 0);
+        // assert((W*W2).contains(commonAcceptor));
+        // assert(W.contains(commonAcceptor));
+        let tracked Hvote1 = Hvotes2.contents.tracked_remove(commonAcceptor);
+        let tracked Hvote2 = Hvotes.contents.tracked_remove(commonAcceptor);
+        tok_tok_false(Hvote1, Hvote2);
+        return false_to_anything();
+    } else if let ⟦∨⟧::Right(Hprop) = Hprop {
+        Hi.contents.tracked_insert(newEpoch, ⟦∨⟧::Left(
+            ⟦∃⟧::exists(W, ((), Hvotes))));
+        inv_close(replN, ⟨is_vote_inv_inner⟩(config, γsys), E, Hi, Hclose);
+        return Hprop;
+    }
+    assert(false);
+    return false_to_anything();
+}
+
 
 fn main() {}
 }

@@ -23,6 +23,7 @@ def main():
               .replace("[∗ set]", "big_sepS")
               .replace("-∗", "wand")
               .replace("∗", "sep")
+              .replace("∨", "or")
               .replace("⊤", "top_mask")
               )
     print(output)
