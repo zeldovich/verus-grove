@@ -1,7 +1,7 @@
 #![verifier::loop_isolation(false)]
 #![allow(non_camel_case_types)]
 use vstd::{prelude::*};
-use vstd::{set_lib::*};
+use vstd::{set_lib::*, seq_lib::*};
 use std::vec::Vec;
 mod lock;
 
@@ -2160,7 +2160,7 @@ struct ProposerState {
     state : StateType,
 
     is_leader : bool,
-    clerks : Vec<&'static Acceptor>,
+    clerks : &'static Vec<&'static Acceptor>,
 }
 
 impl ProposerState {
@@ -2177,10 +2177,13 @@ impl ProposerState {
     }
 }
 
-type ⟦own_proposer⟧ = ⟦∗⟧<Pure, ⟦own_leader_ghost⟧>;
+type ⟦own_proposer⟧ = ⟦∗⟧<Pure, ⟦∗⟧<⟦is_repl_inv⟧, ⟦own_leader_ghost⟧>>;
 spec fn ⟨own_proposer⟩(p:Proposer, s:ProposerState) -> spec_fn(⟦own_proposer⟧) -> bool {
     ⟨∗⟩(⌜ s.inv() ⌝,
-        ⟨own_leader_ghost⟩(p.config, p.γsys, s.st())
+        ⟨∗⟩(
+            ⟨is_repl_inv⟩(p.config, p.γsys),
+            ⟨own_leader_ghost⟩(p.config, p.γsys, s.st())
+        )
     )
 }
 
@@ -2194,6 +2197,7 @@ pub struct Proposer {
 spec fn proposer_inv(p:Proposer, s:ProposerState, Hown:⟦own_proposer⟧) -> bool {
     &&& s.clerks@.len() == NUM_REPLICAS
     &&& p.config.len() == NUM_REPLICAS
+    &&& p.config.no_duplicates()
     &&& holds(Hown, ⟨own_proposer⟩(p, s))
     &&& forall |j| 0 <= j < s.clerks.len() ==> (#[trigger] s.clerks[j]).inv() &&
         s.clerks[j].γsys == p.γsys &&
@@ -2258,21 +2262,33 @@ impl<'a> Committer<'a> {
 
     fn try_commit_internal(self, newState:StateType, oldState:Ghost<StateType>,
                            Hupd:Tracked<⟦own_op_upd⟧>,
-    ) -> Error
+    ) -> (ret:(Error, Tracked<⟦∨⟧<Pure,
+                              ⟦∃⟧<Seq<EntryType>, ⟦∗⟧<Pure, ⟦is_commit_lb⟧>>>>))
         requires
           self.inv(oldState@),
           holds(Hupd@, ⟨own_op_upd⟩(self.p.γsys, self.s.st(), newState))
-
+        ensures
+          holds(ret.1@, ⟨∨⟩(
+              ⌜ ret.0 != ENone ⌝,
+              ⟨∃⟩(|log:Seq<EntryType>|{
+                  ⟨∗⟩(
+                      ⌜ log.last() == newState ⌝,
+                      ⟨is_commit_lb⟩(self.p.γsys, log)
+                  )
+              })
+          )
+          ),
     {
         broadcast use Finite::set_is_finite; // XXX: needed for big_sepS
         let mut s = self.s;
         let mut res = self.res;
         if !s.is_leader {
             self.p.mu.unlock((s, res));
-            return ENotLeader;
+            return (ENotLeader, Tracked(⟦∨⟧::Left(Pure{})));
         }
         let tracked Hown = res.get();
-        let tracked (_, mut Hown) = Hown;
+        let tracked (_, (mut Hown)) = Hown;
+        let tracked (mut Hinv, mut Hown) = Hown;
         let Tracked(Hlc) = get_lc();
 
         // propose new operation
@@ -2291,6 +2307,7 @@ impl<'a> Committer<'a> {
                 Hprop_lb: H.1,
                 Hprop_facts: H.2,
             };
+            s.log = s.log.push(newState);
             // FIXME: this is a trusted assert to make sure invs aren't left open.
             assert(E@ == ⊤);
         }
@@ -2298,11 +2315,16 @@ impl<'a> Committer<'a> {
         let mut num_successes = 0u64;
         assume((s.next_index as nat) < u64::MAX);
         s.next_index = s.next_index + 1;
+        s.state = newState;
         let args = AcceptorApplyArgs{
             epoch: s.epoch,
             next_index: s.next_index,
             state: newState,
         };
+        let clerks = s.clerks;
+
+        let tracked Hown = (Pure{}, (Hinv.dup(), Hown));
+        self.p.mu.unlock((s, Tracked(Hown)));
 
         let mut i : usize = 0;
 
@@ -2316,25 +2338,50 @@ impl<'a> Committer<'a> {
               0 <= i <= NUM_REPLICAS,
               0 <= num_successes <= i,
 
+              Hreplies.contents.dom().finite(),
               Hreplies.contents.dom().subset_of(config.take(i as int).to_set()),
               Hreplies.contents.len() == num_successes,
+              holds(Hreplies,
+                    ⟨[∗ set]⟩(Hreplies.contents.dom(),
+                              |γsrv| ⟨is_accepted_lb⟩(γsrv, args.epoch, Hrpc_pre.log)))
         {
-            let (reply, Tracked(Hpost)) = s.clerks[i].apply(args, Tracked(Hrpc_pre.dup()));
+            let (reply, Tracked(Hpost)) = clerks[i].apply(args, Tracked(Hrpc_pre.dup()));
+            proof {
+                lemma_seq_properties::<mp_server_names>();
+                lemma_set_properties::<mp_server_names>();
+            }
             if reply == ENone {
                 proof {
                     let tracked Hpost = if let ⟦∨⟧::Right(Hpost) = Hpost { Hpost } else { false_to_anything() };
-                    assert(config.len() == self.p.config.len());
-                    Hreplies.contents.insert(config[i as int], Hpost);
+                    Hreplies.contents.tracked_insert(config[i as int], Hpost);
                 }
                 num_successes += 1;
             }
             i += 1;
         }
 
+        let Tracked(Hlc) = get_lc();
         if 2*num_successes > NUM_REPLICAS {
-            return ENone
+            // have a quorum
+            let Et = untrusted_gen_inv_mask();
+            let tracked Hcommit_lb;
+            proof {
+                let tracked Hcom = ⟦∃⟧::exists(
+                    Hreplies.contents.dom(),
+                    (Pure{}, Hreplies)
+                );
+                let tracked mut E = Et.get();
+                Hcommit_lb = ghost_commit(
+                    &mut E, self.p.config, self.p.γsys, args.epoch, Hrpc_pre.log,
+                    Hlc, Hinv.dup(), Hcom, Hrpc_pre.Hprop_lb, Hrpc_pre.Hprop_facts
+                );
+                assert(E@ == ⊤);
+            }
+            return (ENone, Tracked(
+                ⟦∨⟧::Right(⟦∃⟧::exists(Hrpc_pre.log, (Pure{}, Hcommit_lb)))
+            ));
         }
-        return EEpochStale
+        return (EEpochStale, Tracked(⟦∨⟧::Left(Pure{})));
     }
 }
 
