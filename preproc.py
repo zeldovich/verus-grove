@@ -25,6 +25,7 @@ def main():
               .replace("∗", "sep")
               .replace("∨", "or")
               .replace("⊤", "top_mask")
+              .replace("∅", "empty_mask")
               )
     print(output)
 

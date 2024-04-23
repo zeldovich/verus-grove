@@ -1912,12 +1912,56 @@ ensures
     return (Hreplica, Hvote, Hacc_ub, Hprop_lb, Hprop_facts);
 }
 
-// TODO: state and prove ghost_leader_propose
+spec const ghostN : Name = 1;
+spec const empty_mask : Namespace = Set::empty();
 
+type ⟦own_op_upd⟧ =
+⟦fupd⟧<⟦∃⟧<Seq<EntryType>,
+    ⟦∗⟧<⟦own_commit⟧,
+        ⟦wand⟧<⟦∗⟧<Pure, ⟦own_commit⟧>, ⟦fupd⟧<Pure>>>>>;
 
+spec fn ⟨own_op_upd⟩(γsys:mp_system_names, st:MPaxosState, entry:EntryType)
+    -> spec_fn(⟦own_op_upd⟧) -> bool
+{
+    ⟨fupd⟩(⊤.remove(ghostN), ∅,
+    ⟨∃⟩(|someσ:Seq<EntryType>|{
+        ⟨∗⟩(⟨own_commit⟩(γsys, someσ),
+            ⟨-∗⟩(⟨∗⟩(⌜ someσ == st.log ⌝, ⟨own_commit⟩(γsys, someσ.push(entry))),
+                 ⟨fupd⟩(∅, ⊤.remove(ghostN), ⌜ true ⌝)
+            ))
+    }))
+}
 
+proof fn ghost_leader_propose(
+    tracked E: &mut inv_mask,
+    config: Config,
+    γsys: mp_system_names,
+    st: MPaxosState,
+    entry: EntryType,
 
-
+    tracked Hown : ⟦own_leader_ghost⟧,
+    tracked Hlc : ⟦£⟧,
+    tracked Hupd: ⟦own_op_upd⟧,
+)
+->
+(tracked Hout: (⟦own_leader_ghost⟧, ⟦is_proposal_lb⟧, ⟦is_proposal_facts⟧))
+requires
+  holds(Hlc, ⟨£⟩(1)),
+  holds(Hown, ⟨own_leader_ghost⟩(config, γsys, st)),
+  holds(Hupd, ⟨own_op_upd⟩(γsys, st, entry)),
+ensures
+  holds(Hout.0, ⟨own_leader_ghost⟩(config, γsys, MPaxosState{epoch:st.epoch,
+                                                             accepted_epoch:st.accepted_epoch,
+                                                             log: st.log.push(entry)
+  })),
+  holds(Hout.1, ⟨is_proposal_lb⟩(γsys, st.epoch, st.log.push(entry))),
+  holds(Hout.2, ⟨is_proposal_facts⟩(config, γsys, st.epoch, st.log.push(entry))),
+  old(E)@ == E@,
+{
+    // TODO: prove ghost_leader_propose
+    assert(false);
+    return false_to_anything();
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 //  ____                       _                 _ 
@@ -2058,7 +2102,6 @@ impl Acceptor {
                                                                st_p, &Hrep);
                         Hret = ⟦∨⟧::Right(Hlb);
                         Hown = ⟦∃⟧::exists(pre.log, (Pure{}, Hrep));
-
                     }
                     s.next_index = args.next_index;
                     s.state = args.state;
@@ -2104,13 +2147,13 @@ impl Acceptor {
             return (EEpochStale, Tracked(⟦∨⟧::Left(Pure{})));
         }
     }
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Proposer
 
 struct ProposerState {
+    ghost log: Seq<EntryType>,
     epoch : u64,
     next_index : u64,
     state : StateType,
@@ -2119,29 +2162,56 @@ struct ProposerState {
     clerks : Vec<&'static Acceptor>,
 }
 
-type ProposerResource = u64;
+impl ProposerState {
+    spec fn st(self) -> MPaxosState {
+        MPaxosState{
+            epoch: self.epoch,
+            accepted_epoch: 0, // unused
+            log: self.log,
+        }
+    }
 
-pub struct Proposer {
-    mu: lock::Lock<(ProposerState, Tracked<ProposerResource>)>,
+    spec fn inv(self) -> bool {
+        self.log.last() == self.state && self.log.len() == self.next_index
+    }
 }
 
-spec fn proposer_inv(s:ProposerState, res:ProposerResource) -> bool {
+type ⟦own_proposer⟧ = ⟦∗⟧<Pure, ⟦own_leader_ghost⟧>;
+spec fn ⟨own_proposer⟩(p:Proposer, s:ProposerState) -> spec_fn(⟦own_proposer⟧) -> bool {
+    ⟨∗⟩(⌜ s.inv() ⌝,
+        ⟨own_leader_ghost⟩(p.config, p.γsys, s.st())
+    )
+}
+
+pub struct Proposer {
+    ghost config: Config,
+    ghost γsys: mp_system_names,
+    mu: lock::Lock<(ProposerState, Tracked<⟦own_proposer⟧>)>,
+}
+
+
+spec fn proposer_inv(p:Proposer, s:ProposerState, Hown:⟦own_proposer⟧) -> bool {
     &&& s.clerks@.len() == NUM_REPLICAS
-    &&& forall |j| 0 <= j < s.clerks.len() ==> #[trigger] s.clerks[j].inv()
+    &&& p.config.finite()
+    &&& p.config.len() == NUM_REPLICAS
+    &&& holds(Hown, ⟨own_proposer⟩(p, s))
+    &&& forall |j| 0 <= j < s.clerks.len() ==> (#[trigger] s.clerks[j]).inv() &&
+        s.clerks[j].γsys == p.γsys &&
+        s.clerks[j].γsrv == p.config.to_seq()[j] && // TODO: config ordering
+        s.clerks[j].config == p.config
 }
 
 pub struct Committer<'a> {
     s: ProposerState,
-    res: Tracked<ProposerResource>,
+    res: Tracked<⟦own_proposer⟧>,
     p: &'a Proposer
 }
 
 impl Proposer {
     spec fn inv(self) -> bool {
-        forall |s| #[trigger] self.mu.get_pred()(s) <==> proposer_inv(s.0, s.1@)
+        forall |s| #[trigger] self.mu.get_pred()(s) <==> proposer_inv(self, s.0, s.1@)
     }
 
-    // TODO: take as input a "step" function
     fn start<'a>(&'a self) -> (r:(u64, Committer<'a>))
         requires self.inv()
         ensures r.1.inv(r.0)
@@ -2155,25 +2225,79 @@ impl Proposer {
     }
 }
 
+#[verifier(external_body)]
+fn untrusted_gen_inv_mask() -> (ret:Tracked<inv_mask>)
+  ensures ret@@ == ⊤
+{
+    return Tracked::assume_new();
+}
+
+#[verifier(external_body)]
+fn get_lc() -> (ret:Tracked<⟦£⟧>)
+  ensures holds(ret@, ⟨£⟩(1))
+{
+    return Tracked::assume_new();
+}
+
+impl Duplicable for ⟦apply_pre⟧ {
+    proof fn dup(tracked &self) -> (tracked r:Self) {
+        ⟦apply_pre⟧{
+            log: self.log,
+            Hprop_lb: self.Hprop_lb.dup(),
+            Hprop_facts: self.Hprop_facts.dup(),
+        }
+    }
+}
+
 impl<'a> Committer<'a> {
     spec fn inv(self, oldState:u64) -> bool {
         self.p.inv() &&
         self.s.state == oldState &&
-        proposer_inv(self.s, self.res@)
+        proposer_inv(*self.p, self.s, self.res@)
     }
 
-    /*
-    fn try_commit(self, newState:StateType, oldState:Ghost<StateType>) -> Error
-        requires self.inv(oldState@)
+    fn try_commit_internal(self, newState:StateType, oldState:Ghost<StateType>,
+                           Hupd:Tracked<⟦own_op_upd⟧>,
+    ) -> Error
+        requires
+          self.inv(oldState@),
+          holds(Hupd@, ⟨own_op_upd⟩(self.p.γsys, self.s.st(), newState))
+
     {
+        broadcast use Finite::set_is_finite; // XXX: needed for big_sepS
         let mut s = self.s;
         let mut res = self.res;
         if !s.is_leader {
             self.p.mu.unlock((s, res));
             return ENotLeader;
         }
+        let tracked Hown = res.get();
+        let tracked (_, mut Hown) = Hown;
+        let Tracked(Hlc) = get_lc();
+
+        // propose new operation
+        let tracked Hrpc_pre;
+        let Et = untrusted_gen_inv_mask();
+        proof {
+            let tracked mut E = Et.get();
+            let entry = newState;
+            let tracked H = ghost_leader_propose(
+                &mut E, self.p.config, self.p.γsys, s.st(), newState,
+                Hown, Hlc, Hupd.get()
+            );
+            Hown = H.0;
+            Hrpc_pre = ⟦apply_pre⟧{
+                log: s.log.push(entry),
+                Hprop_lb: H.1,
+                Hprop_facts: H.2,
+            };
+            // FIXME: this is a trusted assert to make sure invs aren't left open.
+            assert(E@ == ⊤);
+        }
 
         let mut num_successes = 0u64;
+        assume((s.next_index as nat) < u64::MAX);
+        s.next_index = s.next_index + 1;
         let args = AcceptorApplyArgs{
             epoch: s.epoch,
             next_index: s.next_index,
@@ -2182,13 +2306,26 @@ impl<'a> Committer<'a> {
 
         let mut i : usize = 0;
 
+        let tracked Hreplies = ⟦[∗ set]⟧::<mp_server_names, ⟦is_accepted_lb⟧>{
+            contents: Map::tracked_empty()
+        };
+
+        let ghost oconfig = self.p.config.to_seq();
         while i < NUM_REPLICAS as usize
             invariant
               0 <= i <= NUM_REPLICAS,
               0 <= num_successes <= i,
+
+              Hreplies.contents.dom().subset_of(oconfig.take(i as int).to_set()),
+              Hreplies.contents.len() == num_successes,
         {
-            let reply = s.clerks[i].apply(args);
+            let (reply, Tracked(Hpost)) = s.clerks[i].apply(args, Tracked(Hrpc_pre.dup()));
             if reply == ENone {
+                proof {
+                    let tracked Hpost = if let ⟦∨⟧::Right(Hpost) = Hpost { Hpost } else { false_to_anything() };
+                    assert(oconfig.len() == self.p.config.len());
+                    Hreplies.contents.insert(oconfig[i as int], Hpost);
+                }
                 num_successes += 1;
             }
             i += 1;
@@ -2199,7 +2336,6 @@ impl<'a> Committer<'a> {
         }
         return EEpochStale
     }
-     */
 }
 
 
