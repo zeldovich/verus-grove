@@ -323,22 +323,27 @@ impl View for inv_mask {
     spec fn view(&self) -> Namespace;
 }
 
-/// model for dyn fupd_tr; TODO: don't even have the fupd_tr right now, because
-/// we might not need it.
+trait fupd_tr<⟦P⟧> {
+    spec fn inv(&self) -> bool;
+    spec fn get_Eo(&self) -> Namespace;
+    spec fn get_Ei(&self) -> Namespace;
+    spec fn post(&self) -> spec_fn(inner:⟦P⟧) -> bool;
+
+    proof fn elim(tracked self, tracked E:&mut inv_mask)
+        -> (tracked ret:⟦P⟧) where Self: std::marker::Sized
+      requires old(E)@ == self.get_Eo(),
+               self.inv()
+      ensures E@ == self.get_Ei(),
+        self.post()(ret);
+}
+/// model for dyn fupd_tr.
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(⟦P⟧)]
 struct ⟦fupd⟧<⟦P⟧> {
     _phantom : std::marker::PhantomData<(⟦P⟧)>,
 }
-spec fn ⟨fupd⟩<⟦P⟧>(Eo:Namespace, Ei:Namespace, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
-    -> spec_fn(⟦fupd⟧<⟦P⟧>) -> bool {
-    |res:⟦fupd⟧<⟦P⟧>| {
-        res.post() == ⟨P⟩ &&
-        res.get_Eo() =~= Eo &&
-        res.get_Ei() =~= Ei
-    }
-}
-impl<⟦P⟧> ⟦fupd⟧<⟦P⟧> {
+impl<⟦P⟧> fupd_tr<⟦P⟧> for ⟦fupd⟧<⟦P⟧> {
+    spec fn inv(&self) -> bool;
     spec fn get_Eo(&self) -> Namespace;
     spec fn get_Ei(&self) -> Namespace;
     spec fn post(&self) -> spec_fn(inner:⟦P⟧) -> bool;
@@ -346,11 +351,28 @@ impl<⟦P⟧> ⟦fupd⟧<⟦P⟧> {
     #[verifier(external_body)]
     proof fn elim(tracked self, tracked E:&mut inv_mask)
         -> (tracked ret:⟦P⟧)
-      requires old(E)@ == self.get_Eo()
-      ensures E@ == self.get_Ei(),
-        self.post()(ret)
+    { unimplemented!() }
+}
+impl<⟦P⟧> ⟦fupd⟧<⟦P⟧> {
+    #[verifier(external_body)]
+    proof fn from<T:fupd_tr<⟦P⟧>>(tracked x:T) -> (tracked r:Self)
+        requires x.inv()
+        ensures
+        r.inv(),
+        r.get_Eo() == x.get_Eo(),
+        r.get_Ei() == x.get_Ei(),
+        r.post() == x.post(),
     {
         unimplemented!()
+    }
+}
+spec fn ⟨fupd⟩<⟦P⟧>(Eo:Namespace, Ei:Namespace, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
+    -> spec_fn(⟦fupd⟧<⟦P⟧>) -> bool {
+    |res:⟦fupd⟧<⟦P⟧>| {
+        res.inv() &&
+        res.post() == ⟨P⟩ &&
+        res.get_Eo() =~= Eo &&
+        res.get_Ei() =~= Ei
     }
 }
 
@@ -378,8 +400,11 @@ spec fn ⟨inv⟩<⟦P⟧>(N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
 }
 
 #[verifier(external_body)]
-proof fn inv_alloc<⟦P⟧>(tracked E:&inv_mask, N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool)
-    -> (r:⟦inv⟧<⟦P⟧>)
+proof fn inv_alloc<⟦P⟧>(tracked E:&inv_mask, N:Name, ⟨P⟩:spec_fn(⟦P⟧) -> bool,
+                        tracked Hp:⟦P⟧
+)
+    -> (tracked r:⟦inv⟧<⟦P⟧>)
+    requires holds(Hp, ⟨P⟩)
     ensures ⟨inv⟩(N, ⟨P⟩)(r)
 {
     unimplemented!()
@@ -616,21 +641,18 @@ requires
   Hptsto1.key() == Hptsto2.key(),
 ensures
   Hptsto1.l() == Hptsto2.l(),
-  holds(Hptsto, ⟨mlist_ptsto⟩(Hptsto1.γ(), Hptsto.key(), Hptsto.l())),
+  holds(Hptsto, ⟨mlist_ptsto⟩(Hptsto1.γ(), Hptsto1.key(), Hptsto1.l())),
 {
     unimplemented!()
 }
 
 #[verifier(external_body)]
 proof fn mlist_ptsto_half_split<K,T>(
-    γ:gname, k:K, l:Seq<T>,
     tracked Hptsto: ⟦mlist_ptsto⟧<K,T>,
 ) -> (tracked Hptstos:(⟦mlist_ptsto_half⟧<K,T>, ⟦mlist_ptsto_half⟧<K,T>))
-requires
-  holds(Hptsto, ⟨mlist_ptsto⟩(γ, k, l)),
 ensures
-  holds(Hptstos.0, ⟨mlist_ptsto_half⟩(γ, k, l)),
-  holds(Hptstos.1, ⟨mlist_ptsto_half⟩(γ, k, l)),
+  holds(Hptstos.0, ⟨mlist_ptsto_half⟩(Hptsto.γ(), Hptsto.key(), Hptsto.l())),
+  holds(Hptstos.1, ⟨mlist_ptsto_half⟩(Hptsto.γ(), Hptsto.key(), Hptsto.l())),
 {
     unimplemented!()
 }
@@ -641,6 +663,19 @@ proof fn mlist_ptsto_half_get_lb<K,T>(
 ) -> (tracked Hout:⟦mlist_ptsto_lb⟧<K,T>)
 ensures
   holds(Hout, ⟨mlist_ptsto_lb⟩(Hptsto.γ(), Hptsto.key(), Hptsto.l())),
+{
+    unimplemented!()
+}
+
+#[verifier(external_body)]
+proof fn mlist_ptsto_half_lb_ineq<K,T>(
+    tracked Hptsto: &⟦mlist_ptsto_half⟧<K,T>,
+    tracked Hlb: &⟦mlist_ptsto_lb⟧<K,T>)
+requires
+  Hptsto.γ() == Hlb.γ(),
+  Hptsto.key() == Hlb.key(),
+ensures
+  Hlb.l().is_prefix_of(Hptsto.l())
 {
     unimplemented!()
 }
@@ -829,14 +864,15 @@ spec const ⊤ : Namespace = Set::new(|_p| true);
 spec const replN : Name = 1;
 type ⟦is_proposal_valid⟧ =
 ⟦□⟧<⟦∀⟧<Seq<EntryType>,
-        ⟦-∗⟧<⟦∗⟧<Pure, ⟦own_commit⟧>, ⟦fupd⟧<⟦own_commit⟧>>
+        ⟦-∗⟧<⟦∗⟧<Pure, ⟦∗⟧<⟦own_commit⟧, ⟦£⟧>>, ⟦fupd⟧<⟦∗⟧<⟦own_commit⟧, ⟦£⟧>
+        >>
 >>;
 spec fn ⟨is_proposal_valid⟩(γsys:mp_system_names, σ:Seq<EntryType>)
     -> spec_fn(⟦is_proposal_valid⟧) -> bool {
     ⟨□⟩(
     ⟨∀⟩(|σ_p:Seq<EntryType>| {
-      ⟨-∗⟩(⟨∗⟩(⌜ σ_p.is_prefix_of(σ) ⌝, ⟨own_commit⟩(γsys, σ_p)),
-           ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨own_commit⟩(γsys, σ)))
+      ⟨-∗⟩(⟨∗⟩(⌜ σ_p.is_prefix_of(σ) ⌝, ⟨∗⟩(⟨own_commit⟩(γsys, σ_p), ⟨£⟩(1))),
+           ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨∗⟩(⟨own_commit⟩(γsys, σ), ⟨£⟩(1))))
     })
     )
 }
@@ -1094,7 +1130,8 @@ proof fn ghost_commit(
     γsys:mp_system_names,
     epoch:u64,
     σ: Seq<EntryType>,
-    tracked Hlc: ⟦£⟧,
+    tracked Hlc:  ⟦£⟧,
+    tracked Hlc2: ⟦£⟧,
     tracked Hinv: ⟦is_repl_inv⟧,
     tracked Hcom: ⟦is_committed_by⟧,
     tracked Hprop_lb: ⟦is_proposal_lb⟧,
@@ -1104,6 +1141,7 @@ proof fn ghost_commit(
   requires
     old(E)@ =~= ⊤,
     holds(Hlc, ⟨£⟩(1)),
+    holds(Hlc2, ⟨£⟩(1)),
     holds(Hinv, ⟨is_repl_inv⟩(config, γsys)),
     holds(Hcom, ⟨is_committed_by⟩(config, epoch, σ)),
     holds(Hprop_lb, ⟨is_proposal_lb⟩(γsys, epoch, σ)),
@@ -1144,8 +1182,8 @@ proof fn ghost_commit(
         // update commit using is_prop_valid
         let tracked mut Hown = Hown; // XXX: due to Verus unsupported 
         let tracked Hprop_valid = Hprop_facts.1.dup().elim();
-        let tracked Hcommit = Hprop_valid.instantiate(σcommit).
-            instantiate((Pure{}, Hown.Hcommit)).
+        let tracked (Hcommit, _) = Hprop_valid.instantiate(σcommit).
+            instantiate((Pure{}, (Hown.Hcommit, Hlc2))).
             elim(E);
         let tracked Hlb = mlist_ptsto_half_get_lb(&Hcommit);
 
@@ -1920,11 +1958,11 @@ type ⟦own_op_upd⟧ =
 spec fn ⟨own_op_upd⟩(γsys:mp_system_names, log:Seq<EntryType>, entry:EntryType)
     -> spec_fn(⟦own_op_upd⟧) -> bool
 {
-    ⟨fupd⟩(⊤.remove(ghostN), ∅,
+    ⟨fupd⟩(⊤.remove(replN).remove(opN), ∅,
     ⟨∃⟩(|someσ:Seq<EntryType>|{
         ⟨∗⟩(⟨own_commit⟩(γsys, someσ),
             ⟨-∗⟩(⟨∗⟩(⌜ someσ == log ⌝, ⟨own_commit⟩(γsys, someσ.push(entry))),
-                 ⟨fupd⟩(∅, ⊤.remove(ghostN), ⌜ true ⌝)
+                 ⟨fupd⟩(∅, ⊤.remove(replN).remove(opN), ⌜ true ⌝)
             ))
     }))
 }
@@ -2032,15 +2070,13 @@ impl □_tr<oldPropForall> for OldPropMaxMonoClosure {
 }
 
 type ⟦is_valid_inv_inner⟧ =
- ⟦∗⟧<⟦£⟧, ⟦∨⟧<⟦own_op_upd⟧, ⟦is_commit_lb⟧>>;
+ ⟦∨⟧<⟦∗⟧<⟦£⟧, ⟦own_op_upd⟧>, ⟦is_commit_lb⟧>;
 
 spec fn ⟨is_valid_inv_inner⟩(γsys:mp_system_names, σ:Seq<EntryType>, op:EntryType)
     -> spec_fn(⟦is_valid_inv_inner⟧) -> bool
 {
-    ⟨∗⟩(⟨£⟩(1),
-      ⟨∨⟩(⟨own_op_upd⟩(γsys, σ, op),
-          ⟨is_commit_lb⟩(γsys, σ.push(op))
-      )
+    ⟨∨⟩(⟨∗⟩(⟨£⟩(1), ⟨own_op_upd⟩(γsys, σ, op)),
+        ⟨is_commit_lb⟩(γsys, σ.push(op))
     )
 }
 
@@ -2055,16 +2091,16 @@ spec fn ⟨is_valid_inv⟩(γsys:mp_system_names, σ:Seq<EntryType>, op:EntryTyp
 // is_proposal_valid:
 // ⟦□⟧<⟦∀⟧<Seq<EntryType>,
 //         ⟦-∗⟧<⟦∗⟧<Pure, ⟦own_commit⟧>, ⟦fupd⟧<⟦own_commit⟧>>
-type is_prop_valid_wand = ⟦-∗⟧<⟦∗⟧<Pure, ⟦own_commit⟧>, ⟦fupd⟧<⟦own_commit⟧>>;
-type is_prop_valid_forall = ⟦∀⟧<Seq<EntryType>,
-    ⟦-∗⟧<⟦∗⟧<Pure, ⟦own_commit⟧>, ⟦fupd⟧<⟦own_commit⟧>>>;
+type is_prop_valid_fupd = ⟦fupd⟧<⟦∗⟧<⟦own_commit⟧, ⟦£⟧>>;
+type is_prop_valid_wand = ⟦-∗⟧<⟦∗⟧<Pure, ⟦∗⟧<⟦own_commit⟧, ⟦£⟧>>, is_prop_valid_fupd>;
+type is_prop_valid_forall = ⟦∀⟧<Seq<EntryType>, is_prop_valid_wand>;
 
 // Handles □, ∀, and -∗
 tracked struct IsPropValidOuterClosure {
     ghost γsys: mp_system_names,
     ghost σ: Seq<EntryType>,
     ghost op: EntryType,
-    ghost σ_p: EntryType, // unused for □ and ∀
+    ghost σ_p: Seq<EntryType>, // unused for □ and ∀
     tracked Hinv: ⟦is_valid_inv⟧,
     tracked Hold: ⟦is_proposal_valid⟧,
 }
@@ -2075,6 +2111,110 @@ impl IsPropValidOuterClosure {
     }
 }
 
+// handles fupd
+tracked struct IsPropValidFupdClosure {
+    tracked outer: IsPropValidOuterClosure,
+    tracked Hcommit: ⟦own_commit⟧,
+    tracked Hlc: ⟦£⟧,
+}
+impl IsPropValidFupdClosure {
+    spec fn inv(&self) -> bool {
+        self.outer.inv() &&
+        self.outer.σ_p.is_prefix_of(self.outer.σ.push(self.outer.op)) &&
+        holds(self.Hcommit,
+              ⟨own_commit⟩(self.outer.γsys, self.outer.σ_p)
+        ) &&
+        holds(self.Hlc, ⟨£⟩(1))
+    }
+}
+impl fupd_tr<⟦∗⟧<⟦own_commit⟧, ⟦£⟧>> for IsPropValidFupdClosure {
+    spec fn inv(&self) -> bool {
+        self.inv()
+    }
+
+    spec fn get_Eo(&self) -> Namespace {
+        ⊤.remove(replN)
+    }
+
+    spec fn get_Ei(&self) -> Namespace {
+        ⊤.remove(replN)
+    }
+
+    spec fn post(&self) -> spec_fn(⟦∗⟧<⟦own_commit⟧, ⟦£⟧>) -> bool
+    {
+        ⟨∗⟩(⟨own_commit⟩(self.outer.γsys, self.outer.σ.push(self.outer.op)),
+            ⟨£⟩(1))
+    }
+
+    proof fn elim(tracked self, tracked E:&mut inv_mask)
+        -> (tracked ret:⟦∗⟧<⟦own_commit⟧, ⟦£⟧>)
+    {
+        lemma_seq_properties::<EntryType>(); // for prefix transitivity
+        // lemma_set_properties::<Name>(); // for namespace
+        // This is the real proof of is_proposal_valid
+        if self.outer.σ_p =~= self.outer.σ.push(self.outer.op) {
+            return (self.Hcommit, self.Hlc);
+        } else {
+            // First, update up to σ.
+            let tracked (Hcommit, Hlc) = self.outer.Hold.elim().instantiate(self.outer.σ_p).
+                instantiate((Pure{}, (self.Hcommit, self.Hlc))).
+                elim(E);
+            assert(Hcommit.l() == self.outer.σ);
+            // Now, open Hinv
+            let tracked (mut Hi, mut Hcloser) =
+                inv_open(opN, ⟨is_valid_inv_inner⟩(self.outer.γsys, self.outer.σ, self.outer.op),
+                         E, self.outer.Hinv.dup(), Hlc,
+                );
+            let tracked (Hlc, Hupd) = match Hi {
+                ⟦∨⟧::Left(Hupd) => Hupd,
+                ⟦∨⟧::Right(Hbad) => {
+                    mlist_ptsto_half_lb_ineq(&Hcommit, &Hbad);
+                    return false_to_anything();
+                }
+            };
+
+            // fire upd for last operation
+            let tracked (Ghost(σ2), (Hcommit2, Hupd)) = Hupd.elim(E).destruct();
+            let tracked mut Hfull_commit = mlist_ptsto_half_combine(Hcommit, Hcommit2);
+            Hfull_commit = mlist_ptsto_update(self.outer.σ.push(self.outer.op), Hfull_commit);
+            // split
+            let tracked (Hcommit1, Hcommit2) = mlist_ptsto_half_split(Hfull_commit);
+            Hupd.instantiate((Pure{}, Hcommit2)).elim(E);
+
+            let tracked Hlb = mlist_ptsto_half_get_lb(&Hcommit1);
+            inv_close(opN, ⟨is_valid_inv_inner⟩(self.outer.γsys, self.outer.σ, self.outer.op),
+                      E, ⟦∨⟧::Right(Hlb), Hcloser,
+            );
+            return (Hcommit1, Hlc);
+        }
+    }
+}
+impl wand_tr<⟦∗⟧<Pure, ⟦∗⟧<⟦own_commit⟧, ⟦£⟧>>, is_prop_valid_fupd> for IsPropValidOuterClosure {
+    spec fn inv(&self) -> bool {
+        self.inv()
+    }
+
+    spec fn pre(&self) -> spec_fn(⟦∗⟧<Pure, ⟦∗⟧<⟦own_commit⟧, ⟦£⟧>>) -> bool
+    {
+        ⟨∗⟩(⌜ self.σ_p.is_prefix_of(self.σ.push(self.op)) ⌝, ⟨∗⟩(⟨own_commit⟩(self.γsys, self.σ_p), ⟨£⟩(1)))
+    }
+
+    spec fn post(&self) -> spec_fn(is_prop_valid_fupd) -> bool
+    {
+        ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨∗⟩(⟨own_commit⟩(self.γsys, self.σ.push(self.op)), ⟨£⟩(1)))
+    }
+
+    proof fn instantiate(tracked self, tracked Hpre:⟦∗⟧<Pure, ⟦∗⟧<⟦own_commit⟧, ⟦£⟧>>)
+        -> (tracked Hpost:is_prop_valid_fupd)
+    {
+        let tracked Hclos = IsPropValidFupdClosure {
+            outer: self,
+            Hcommit: Hpre.1.0,
+            Hlc: Hpre.1.1,
+        };
+        return ⟦fupd⟧::from(Hclos);
+    }
+}
 impl ∀_tr<Seq<EntryType>, is_prop_valid_wand> for IsPropValidOuterClosure {
     spec fn inv(&self) -> bool {
         self.inv()
@@ -2084,16 +2224,17 @@ impl ∀_tr<Seq<EntryType>, is_prop_valid_wand> for IsPropValidOuterClosure {
         spec_fn(is_prop_valid_wand) -> bool
     {
         |σ_p:Seq<EntryType>| {
-            ⟨-∗⟩(⟨∗⟩(⌜ σ_p.is_prefix_of(self.σ.push(self.op)) ⌝, ⟨own_commit⟩(self.γsys, σ_p)),
-                 ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨own_commit⟩(self.γsys, self.σ.push(self.op))))
+            ⟨-∗⟩(⟨∗⟩(⌜ σ_p.is_prefix_of(self.σ.push(self.op)) ⌝, ⟨∗⟩(⟨own_commit⟩(self.γsys, σ_p), ⟨£⟩(1))),
+                 ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨∗⟩(⟨own_commit⟩(self.γsys, self.σ.push(self.op)), ⟨£⟩(1))))
         }
     }
 
     proof fn instantiate(tracked self, σ_p:Seq<EntryType>) ->
         (tracked out: is_prop_valid_wand)
     {
-        assert(false);
-        return false_to_anything();
+        let tracked mut s = self;
+        s.σ_p = σ_p;
+        return ⟦-∗⟧::from(s);
     }
 }
 impl □_tr<is_prop_valid_forall> for IsPropValidOuterClosure {
@@ -2104,8 +2245,8 @@ impl □_tr<is_prop_valid_forall> for IsPropValidOuterClosure {
     spec fn post(&self) -> spec_fn(is_prop_valid_forall) -> bool
     {
         ⟨∀⟩(|σ_p:Seq<EntryType>| {
-            ⟨-∗⟩(⟨∗⟩(⌜ σ_p.is_prefix_of(self.σ.push(self.op)) ⌝, ⟨own_commit⟩(self.γsys, σ_p)),
-                 ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨own_commit⟩(self.γsys, self.σ.push(self.op))))
+            ⟨-∗⟩(⟨∗⟩(⌜ σ_p.is_prefix_of(self.σ.push(self.op)) ⌝, ⟨∗⟩(⟨own_commit⟩(self.γsys, σ_p), ⟨£⟩(1)) ),
+                 ⟨fupd⟩(⊤.remove(replN), ⊤.remove(replN), ⟨∗⟩(⟨own_commit⟩(self.γsys, self.σ.push(self.op)), ⟨£⟩(1))))
         })
     }
 
@@ -2166,17 +2307,19 @@ ensures
         Hmax: Hown.Hprop_facts.0,
     };
     let tracked Hmax = ⟦□⟧::from(Hclos);
-
-
-    let tracked Hvalid = false_to_anything();
-    let tracked Hprop_facts = (Hmax, Hvalid);
-    assert(
-        holds(Hvalid, ⟨is_proposal_valid⟩(γsys, st.log.push(entry)))
+    let tracked Hinv = inv_alloc(E, opN, ⟨is_valid_inv_inner⟩(γsys, st.log, entry),
+                                 ⟦∨⟧::Left((Hlc, Hupd))
     );
-
-    // Prove old_proposal_max
-
-    // TODO: prove ghost_leader_propose
+    let tracked Hclos = IsPropValidOuterClosure{
+        γsys: γsys,
+        σ: st.log,
+        op: entry,
+        σ_p: Seq::empty(), // unused
+        Hinv: Hinv,
+        Hold: Hown.Hprop_facts.1,
+    };
+    let tracked Hvalid = ⟦□⟧::from(Hclos);
+    let tracked Hprop_facts = (Hmax, Hvalid);
     Hown.Hprop_facts = Hprop_facts.dup();
     return (Hown, Hprop_lb, Hprop_facts);
 }
@@ -2577,6 +2720,7 @@ impl<'a> Committer<'a> {
         }
 
         let Tracked(Hlc) = get_lc();
+        let Tracked(Hlc2) = get_lc();
         if 2*num_successes > NUM_REPLICAS {
             // have a quorum
             let Et = untrusted_gen_inv_mask();
@@ -2589,7 +2733,7 @@ impl<'a> Committer<'a> {
                 let tracked mut E = Et.get();
                 Hcommit_lb = ghost_commit(
                     &mut E, self.p.config, self.p.γsys, args.epoch, Hrpc_pre.log,
-                    Hlc, Hinv.dup(), Hcom, Hrpc_pre.Hprop_lb, Hrpc_pre.Hprop_facts
+                    Hlc, Hlc2, Hinv.dup(), Hcom, Hrpc_pre.Hprop_lb, Hrpc_pre.Hprop_facts
                 );
                 assert(E@ == ⊤);
             }
