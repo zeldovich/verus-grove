@@ -788,7 +788,7 @@ spec fn ⟨is_commit_lb⟩(γsys:mp_system_names, σ:Seq<EntryType>) ->
 }
 
 
-type Config = Set<mp_server_names>;
+type Config = Seq<mp_server_names>;
 
 type ⟦is_committed_by⟧ = ⟦∃⟧<Set<mp_server_names>, ⟦∗⟧<Pure, ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_lb⟧>>>;
 
@@ -813,7 +813,7 @@ type ⟦old_proposal_max⟧ =
     ⟦□⟧<⟦∀⟧<(u64, Seq<EntryType>),
         ⟦-∗⟧<⟦∗⟧<Pure, ⟦is_committed_by⟧>, Pure>>>;
 
-spec fn ⟨old_proposal_max⟩(config:Set<mp_server_names>, γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>)
+spec fn ⟨old_proposal_max⟩(config:Config, γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>)
     -> spec_fn(⟦old_proposal_max⟧) -> bool {
     ⟨□⟩(
     ⟨∀⟩(|f:(u64,Seq<EntryType>)| {
@@ -845,7 +845,7 @@ spec fn ⟨is_proposal_valid⟩(γsys:mp_system_names, σ:Seq<EntryType>)
 }
 
 type ⟦is_proposal_facts⟧ = ⟦∗⟧<⟦old_proposal_max⟧, ⟦is_proposal_valid⟧>;
-spec fn ⟨is_proposal_facts⟩(config:Set<mp_server_names>, γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>) ->
+spec fn ⟨is_proposal_facts⟩(config:Config, γsys:mp_system_names, epoch:u64, σ:Seq<EntryType>) ->
     spec_fn(⟦is_proposal_facts⟧) -> bool
 {
     ⟨∗⟩(
@@ -1060,7 +1060,7 @@ tracked struct ⟦is_repl_inv_inner_ex⟧ {
     Hprop_facts: ⟦is_proposal_facts⟧,
 }
 type ⟦is_repl_inv_inner⟧ = ⟦∃⟧<(Seq<EntryType>, u64), ⟦is_repl_inv_inner_ex⟧>;
-spec fn ⟨is_repl_inv_inner⟩(config:Set<mp_server_names>, γsys:mp_system_names)
+spec fn ⟨is_repl_inv_inner⟩(config:Config, γsys:mp_system_names)
     -> spec_fn(⟦is_repl_inv_inner⟧) -> bool
 {
     ⟨∃⟩(
@@ -1078,7 +1078,7 @@ spec fn ⟨is_repl_inv_inner⟩(config:Set<mp_server_names>, γsys:mp_system_nam
 }
 
 type ⟦is_repl_inv⟧ = ⟦inv⟧<⟦is_repl_inv_inner⟧>;
-spec fn ⟨is_repl_inv⟩(config:Set<mp_server_names>, γsys:mp_system_names)
+spec fn ⟨is_repl_inv⟩(config:Config, γsys:mp_system_names)
     -> spec_fn(⟦is_repl_inv⟧) -> bool
 {
     ⟨inv⟩(replN, ⟨is_repl_inv_inner⟩(config, γsys))
@@ -1325,10 +1325,10 @@ proof fn accepted_upper_bound_mono_log(
 
 
 spec fn is_quorum(config:Config, W:Set<mp_server_names>) -> bool {
-    config.finite() &&
+    config.no_duplicates() &&
     W.finite() &&
     2 * W.len() > config.len() &&
-    W.subset_of(config)
+    W.subset_of(config.to_set())
 }
 
 proof fn quorum_intersection(config:Config, W1:Set<mp_server_names>, W2:Set<mp_server_names>)
@@ -1340,7 +1340,8 @@ ensures
   W1.contains(ret),
   W2.contains(ret)
 {
-    lemma_len_subset(W1+W2, config);
+    config.unique_seq_to_set();
+    lemma_len_subset(W1+W2, config.to_set());
     if W2.disjoint(W1) {
         lemma_set_disjoint_lens(W1, W2);
         return false_to_anything();
@@ -1375,7 +1376,7 @@ spec fn ⟨is_vote_inv_inner⟩(config:Config, γsys:mp_system_names)
 }
 
 type ⟦is_vote_inv⟧ = ⟦inv⟧<⟦is_vote_inv_inner⟧>;
-spec fn ⟨is_vote_inv⟩(config:Set<mp_server_names>, γsys:mp_system_names)
+spec fn ⟨is_vote_inv⟩(config:Config, γsys:mp_system_names)
     -> spec_fn(⟦is_vote_inv⟧) -> bool
 {
     ⟨inv⟩(replN, ⟨is_vote_inv_inner⟩(config, γsys))
@@ -1635,9 +1636,9 @@ proof fn become_leader(
 (Hout:⟦own_leader_ghost⟧)
 requires
   old(E)@.contains(replN),
-  config.finite(),
+  config.no_duplicates(),
   W.finite(),
-  W.subset_of(config),
+  W.subset_of(config.to_set()),
   2 * W.len() > config.len(),
   holds(Hlc, ⟨£⟩(1)),
   holds(Hinv, ⟨is_vote_inv⟩(config, γsys)),
@@ -2192,12 +2193,11 @@ pub struct Proposer {
 
 spec fn proposer_inv(p:Proposer, s:ProposerState, Hown:⟦own_proposer⟧) -> bool {
     &&& s.clerks@.len() == NUM_REPLICAS
-    &&& p.config.finite()
     &&& p.config.len() == NUM_REPLICAS
     &&& holds(Hown, ⟨own_proposer⟩(p, s))
     &&& forall |j| 0 <= j < s.clerks.len() ==> (#[trigger] s.clerks[j]).inv() &&
         s.clerks[j].γsys == p.γsys &&
-        s.clerks[j].γsrv == p.config.to_seq()[j] && // TODO: config ordering
+        s.clerks[j].γsrv == p.config[j] && // TODO: config ordering
         s.clerks[j].config == p.config
 }
 
@@ -2310,21 +2310,21 @@ impl<'a> Committer<'a> {
             contents: Map::tracked_empty()
         };
 
-        let ghost oconfig = self.p.config.to_seq();
+        let ghost config = self.p.config;
         while i < NUM_REPLICAS as usize
             invariant
               0 <= i <= NUM_REPLICAS,
               0 <= num_successes <= i,
 
-              Hreplies.contents.dom().subset_of(oconfig.take(i as int).to_set()),
+              Hreplies.contents.dom().subset_of(config.take(i as int).to_set()),
               Hreplies.contents.len() == num_successes,
         {
             let (reply, Tracked(Hpost)) = s.clerks[i].apply(args, Tracked(Hrpc_pre.dup()));
             if reply == ENone {
                 proof {
                     let tracked Hpost = if let ⟦∨⟧::Right(Hpost) = Hpost { Hpost } else { false_to_anything() };
-                    assert(oconfig.len() == self.p.config.len());
-                    Hreplies.contents.insert(oconfig[i as int], Hpost);
+                    assert(config.len() == self.p.config.len());
+                    Hreplies.contents.insert(config[i as int], Hpost);
                 }
                 num_successes += 1;
             }
