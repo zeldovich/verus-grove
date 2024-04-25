@@ -2428,6 +2428,37 @@ spec fn ⟨apply_post⟩(a:Acceptor, args:AcceptorApplyArgs, log:Seq<EntryType>,
     )
 }
 
+type EnterNewEpochArgs = u64;
+struct EnterNewEpochReply {
+    err: u64,
+    accepted_epoch: u64,
+    next_index: u64,
+    state: StateType,
+}
+
+// Resources sent in case of no error
+tracked struct ⟦enter_new_post⟧ {
+    ghost log: Seq<EntryType>,
+    Hacc: ⟦is_accepted_upper_bound⟧,
+    Hprop_lb: ⟦is_proposal_lb⟧,
+    Hprop_facts: ⟦is_proposal_facts⟧,
+    Hvote: ⟦own_vote_tok⟧,
+}
+
+spec fn ⟨enter_new_post⟩(a:Acceptor, args:EnterNewEpochArgs, reply:EnterNewEpochReply)
+    -> spec_fn(⟦enter_new_post⟧) -> bool
+{
+    |res:⟦enter_new_post⟧| {
+        res.log.len() == reply.next_index &&
+        res.log.last() == reply.state &&
+        holds(res.Hacc, ⟨is_accepted_upper_bound⟩(a.γsrv, res.log, reply.accepted_epoch, args)) &&
+        holds(res.Hprop_lb, ⟨is_proposal_lb⟩(a.γsys, reply.accepted_epoch, res.log)) &&
+        holds(res.Hprop_facts, ⟨is_proposal_facts⟩(a.config, a.γsys, reply.accepted_epoch, res.log)) &&
+        holds(res.Hvote, ⟨own_vote_tok⟩(a.γsrv, args))
+    }
+}
+    
+
 impl Acceptor {
     spec fn inv(self)
         -> bool
@@ -2522,6 +2553,51 @@ impl Acceptor {
             self.mu.unlock((s, Tracked(Hown)));
             return (EEpochStale, Tracked(⟦∨⟧::Left(Pure{})));
         }
+    }
+
+    fn enter_new_epoch(&self, args:EnterNewEpochArgs) ->
+        (ret:(EnterNewEpochReply, Tracked<⟦∨⟧<Pure, ⟦enter_new_post⟧>>))
+        requires self.inv()
+        ensures
+          holds(ret.1@, ⟨∨⟩(⌜ ret.0.err != ENone ⌝, ⟨enter_new_post⟩(*self, args, ret.0)))
+    {
+        let (mut s, mut res) = self.mu.lock();
+        let mut reply = EnterNewEpochReply{
+            err: EEpochStale,
+            accepted_epoch: 0,
+            next_index: 0,
+            state: 0,
+        };
+        if s.epoch >= args {
+            self.mu.unlock((s, res));
+            return (reply, Tracked(⟦∨⟧::Left(Pure{})));
+        }
+
+        let tracked mut Hown = res.get();
+        let tracked (Ghost(log), (_, mut Hrep)) = Hown.destruct();
+        let tracked Hpost;
+        proof {
+            let tracked Hout = ghost_replica_enter_new_epoch(
+                self.config, self.γsys, self.γsrv,
+                MPaxosState{ epoch: s.epoch, accepted_epoch: s.accepted_epoch, log: log },
+                args, Hrep
+            );
+            Hown = ⟦∃⟧::exists(log, (Pure{}, Hout.0));
+            Hpost = ⟦enter_new_post⟧{
+                log: log,
+                Hvote: Hout.1,
+                Hacc: Hout.2,
+                Hprop_lb: Hout.3,
+                Hprop_facts: Hout.4
+            };
+        }
+
+        s.epoch = args;
+        reply.accepted_epoch = s.accepted_epoch;
+        reply.next_index = s.next_index;
+        reply.state = s.state;
+        self.mu.unlock((s, Tracked(Hown)));
+        return (reply, Tracked(⟦∨⟧::Right(Hpost)));
     }
 }
 

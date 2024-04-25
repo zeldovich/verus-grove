@@ -93,12 +93,14 @@ impl Acceptor {
             state: 0,
         };
         if s.epoch >= args {
-            return;
+            self.mu.unlock((s, res));
+            return reply;
         }
-        self.epoch = epoch;
-        reply.accepted_epoch = self.accepted_epoch;
-        reply.next_index = self.next_index;
-        reply.state = self.state;
+        s.epoch = args;
+        reply.accepted_epoch = s.accepted_epoch;
+        reply.next_index = s.next_index;
+        reply.state = s.state;
+        self.mu.unlock((s, res));
         return reply;
     }
 }
