@@ -484,6 +484,23 @@ ensures
 { unimplemented!() }
 
 
+#[verifier(external_body)]
+#[verifier::reject_recursive_types(V)]
+struct ⟦ghost_var_half⟧<V> {
+    _phantom2 : std::marker::PhantomData<V>,
+}
+impl<V> ⟦ghost_var_half⟧<V> {
+    spec fn γ(&self) -> gname;
+    spec fn v(&self) -> V;
+}
+spec fn ⟨ghost_var_half⟩<V>(γ:gname, v:V) -> spec_fn(⟦ghost_var_half⟧<V>) -> bool {
+    |res:⟦ghost_var_half⟧<_>| {
+        &&& res.γ() == γ
+        &&& res.v() == v
+    }
+}
+
+
 
 #[verifier(external_body)]
 #[verifier::reject_recursive_types(K)]
@@ -711,6 +728,7 @@ ensures
 
 struct mp_system_names {
     proposal_gn : gname,
+    log_gn : gname,
     state_gn : gname,
 }
 
@@ -810,14 +828,14 @@ type ⟦own_commit⟧ = ⟦mlist_ptsto_half⟧<u64, EntryType>;
 spec fn ⟨own_commit⟩(γsys:mp_system_names, σ:Seq<EntryType>) ->
     spec_fn(⟦own_commit⟧) -> bool
 {
-    ⟨mlist_ptsto_half⟩(γsys.state_gn, 0, σ)
+    ⟨mlist_ptsto_half⟩(γsys.log_gn, 0, σ)
 }
 
 type ⟦is_commit_lb⟧ = ⟦mlist_ptsto_lb⟧<u64, EntryType>;
 spec fn ⟨is_commit_lb⟩(γsys:mp_system_names, σ:Seq<EntryType>) ->
     spec_fn(⟦is_commit_lb⟧) -> bool
 {
-    ⟨mlist_ptsto_lb⟩(γsys.state_gn, 0, σ)
+    ⟨mlist_ptsto_lb⟩(γsys.log_gn, 0, σ)
 }
 
 
@@ -841,7 +859,6 @@ spec fn lt(a:u64, b:u64) -> bool {
     a < b
 }
 
-// TODO: uncurry the wand
 type ⟦old_proposal_max⟧ =
     ⟦□⟧<⟦∀⟧<(u64, Seq<EntryType>),
         ⟦-∗⟧<⟦∗⟧<Pure, ⟦is_committed_by⟧>, Pure>>>;
@@ -2149,8 +2166,6 @@ impl fupd_tr<⟦∗⟧<⟦own_commit⟧, ⟦£⟧>> for IsPropValidFupdClosure {
     proof fn elim(tracked self, tracked E:&mut inv_mask)
         -> (tracked ret:⟦∗⟧<⟦own_commit⟧, ⟦£⟧>)
     {
-        lemma_seq_properties::<EntryType>(); // for prefix transitivity
-        // lemma_set_properties::<Name>(); // for namespace
         // This is the real proof of is_proposal_valid
         if self.outer.σ_p =~= self.outer.σ.push(self.outer.op) {
             return (self.Hcommit, self.Hlc);
@@ -2613,6 +2628,9 @@ impl Duplicable for ⟦apply_pre⟧ {
     }
 }
 
+type ⟦own_state⟧ = ⟦ghost_var_half⟧<StateType>;
+type ⟦own_state_upd⟧ = ⟦fupd⟧<⟦∗⟧<⟦own_state⟧, ⟦wand⟧<⟦∗⟧<Pure, ⟦own_state⟧>, ⟦fupd⟧<Pure>>>>;
+
 impl<'a> Committer<'a> {
     spec fn inv(self, oldState:u64) -> bool {
         self.p.inv() &&
@@ -2723,8 +2741,8 @@ impl<'a> Committer<'a> {
         let Tracked(Hlc2) = get_lc();
         if 2*num_successes > NUM_REPLICAS {
             // have a quorum
-            let Et = untrusted_gen_inv_mask();
             let tracked Hcommit_lb;
+            let Et = untrusted_gen_inv_mask();
             proof {
                 let tracked Hcom = ⟦∃⟧::exists(
                     Hreplies.contents.dom(),
@@ -2743,6 +2761,20 @@ impl<'a> Committer<'a> {
         }
         return (EEpochStale, Tracked(⟦∨⟧::Left(Pure{})));
     }
+
+    /*
+    fn try_commit<⟦Q⟧>(self, newState:StateType, oldState:Ghost<StateType>,
+                       ⟨Q⟩:Ghost<spec_fn(⟦Q⟧) -> bool>,
+                       Hupd:Tracked<⟦own_state_upd⟧>,
+    ) -> (ret:(Error, Tracked<⟦∨⟧<Pure, ⟦Q⟧>>))
+        requires
+          self.inv(oldState@),
+          holds(Hupd@, ⟨own_state_upd⟩(self.p.γsys, oldState, newState))
+        ensures
+          holds(ret.1@, ⟨∨⟩(⌜ ret.0 != ENone ⌝, ⟨Q⟩)),
+    {
+        unimplemented!()
+    }*/
 }
 
 
