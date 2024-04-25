@@ -3083,6 +3083,7 @@ impl<'a> Committer<'a> {
                     &mut E, self.p.config, self.p.γsys, args.epoch, Hrpc_pre.log,
                     Hlc, Hlc2, Hinv.dup(), Hcom, Hrpc_pre.Hprop_lb, Hrpc_pre.Hprop_facts
                 );
+                // FIXME: this is a trusted assert to make sure invs aren't left open.
                 assert(E@ == ⊤);
             }
             return (ENone, Tracked(

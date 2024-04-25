@@ -2,7 +2,8 @@ use vstd::{prelude::*};
 pub mod lmap;
 
 verus! {
-    pub struct GhostMapAuth<#[verifier::reject_recursive_types] K,V> {
+    #[verifier::reject_recursive_types(K)]
+    pub struct GhostMapAuth<K,V> {
         pub kvs:Map<K,V>,
         pub _id:nat,
     }

@@ -136,12 +136,12 @@ verus! {
     }
 
     struct KvErpcServer {
-        mu: lock::Lock<KvErpcState>,
+        pub mu: lock::Lock<KvErpcState>,
         pub kv_gname: Ghost<nat>,
         pub gamma:Ghost<ExactlyOnceGnames>,
     }
 
-    spec fn gen_lock_pred(s:KvErpcServer) -> FnSpec(KvErpcState) -> bool {
+    spec fn gen_lock_pred(s:KvErpcServer) -> spec_fn(KvErpcState) -> bool {
         |st:KvErpcState|
         st.g@.kv_auth.gname() == s.kv_gname &&
             st.g@.inv(s.gamma@, st@)
@@ -210,6 +210,7 @@ verus! {
         }
 
         proof fn put_fupd(tracked &mut self, st:KvErpcStateGhost,
+                                  tracked lc: OpenInvariantCredit,
                                   tracked pre:&PutPreCond) -> (tracked r:(GhostWitness, GhostWitness)) // receipt, executed
             requires old(self).inv(pre.constant().gamma, st),
             pre.constant().kv_gname == old(self).kv_auth.gname(),
@@ -233,7 +234,7 @@ verus! {
                 // open invariant, and fire the fupd with the points-to
                 let tracked witness;
                 let tracked executed;
-                open_atomic_invariant!(&pre => r => {
+                open_atomic_invariant_in_proof!(lc => &pre => r => {
                     match r {
                         Or::Left((unexecuted, mut ptsto)) => {
                             self.kv_auth.update(pre.constant().v, &mut ptsto);
@@ -370,7 +371,8 @@ verus! {
             r.1@.gname() == self.gamma@.req_gnames[req_id],
         {
             let mut s = self.mu.lock();
-            let tracked (witness, executed) = (s.g.borrow_mut()).put_fupd(s@, &pre);
+            let Tracked(lc) = create_open_invariant_credit();
+            let tracked (witness, executed) = (s.g.borrow_mut()).put_fupd(s@, lc, &pre);
             match s.replies.get(req_id) {
                 Some(_) => {},
                 None => {
@@ -440,7 +442,8 @@ verus! {
         (i, client_escrow_token)
     }
 
-    proof fn claim_put_post(tracked pre:&PutPreCond,
+    proof fn claim_put_post(tracked lc: OpenInvariantCredit,
+                            tracked pre:&PutPreCond,
                             tracked receipt:GhostWitness,
                             tracked executed:GhostWitness,
                             tracked escrow_tok:GhostToken,
@@ -460,7 +463,7 @@ verus! {
         opens_invariants any
     {
         let tracked ptsto_ret;
-        open_atomic_invariant!(&pre => r => {
+        open_atomic_invariant!(lc => &pre => r => {
             match r {
                 Or::Left((unexecuted, ptsto)) => {
                     token_witness_false(&unexecuted, &executed);
@@ -539,7 +542,8 @@ verus! {
             // the call that actually gets a successful response
             let (Tracked(receipt), Tracked(executed)) = (*self.rpcClient).put_rpc(req_id, k, v, Tracked(&(*pre)));
 
-            let tracked ptsto = claim_put_post(&(*pre), receipt, executed, escrow_tok);
+            let Tracked(lc) = create_open_invariant_credit();
+            let tracked ptsto = claim_put_post(lc, &(*pre), receipt, executed, escrow_tok);
             return Tracked(ptsto);
         }
     }

@@ -1,7 +1,8 @@
 use vstd::{prelude::*,seq_lib::*};
 
 verus! {
-    pub struct LMap<#[verifier::reject_recursive_types] K,V> {
+    #[verifier::reject_recursive_types(K)]
+    pub struct LMap<K,V> {
         kv_vec: Vec<(K, V)>,
     }
 
