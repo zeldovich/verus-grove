@@ -1684,7 +1684,7 @@ proof fn become_leader(
     tracked Hvotes: ⟦[∗ set]⟧<mp_server_names, ⟦own_vote_tok⟧>,
 )
 ->
-(Hout:⟦own_leader_ghost⟧)
+(tracked Hout:⟦own_leader_ghost⟧)
 requires
   old(E)@.contains(replN),
   config.no_duplicates(),
@@ -1700,7 +1700,7 @@ requires
 ensures
   old(E)@ == E@,
   holds(Hout, ⟨own_leader_ghost⟩(config, γsys, MPaxosState{epoch:newEpoch,
-                                                           accepted_epoch:newEpoch,
+                                                           accepted_epoch:0,
                                                            log:latestLog})),
 {
     let tracked mut Hprop = get_proposal_from_votes(E, config, γsys, W, newEpoch, Hlc, Hinv, Hvotes);
@@ -2374,7 +2374,7 @@ spec fn ⟨own_Acceptor⟩(config:Config, γsys:mp_system_names, γsrv:mp_server
 {
     ⟨∃⟩(|log:Seq<EntryType>|{
         ⟨∗⟩(
-            ⌜ x.state == log.last() && x.next_index == log.len() ⌝,
+            ⌜ x.state == def_last(log) && x.next_index == log.len() ⌝,
             ⟨own_replica_ghost⟩(config, γsys, γsrv, MPaxosState{
                 epoch: x.epoch,
                 accepted_epoch: x.accepted_epoch,
@@ -2412,7 +2412,7 @@ spec fn ⟨apply_pre⟩(a:Acceptor, args:AcceptorApplyArgs) ->
     |res:⟦apply_pre⟧| {
         holds(res.Hprop_lb, ⟨is_proposal_lb⟩(a.γsys, args.epoch, res.log)) &&
         holds(res.Hprop_facts, ⟨is_proposal_facts⟩(a.config, a.γsys, args.epoch, res.log)) &&
-        res.log.last() == args.state &&
+        def_last(res.log) == args.state &&
         res.log.len() == args.next_index
     }
 }
@@ -2445,12 +2445,17 @@ tracked struct ⟦enter_new_post⟧ {
     Hvote: ⟦own_vote_tok⟧,
 }
 
+spec fn def_last(log:Seq<EntryType>) -> EntryType {
+    if log.len() > 0 { log.last() } else { 0 }
+}
+
 spec fn ⟨enter_new_post⟩(a:Acceptor, args:EnterNewEpochArgs, reply:EnterNewEpochReply)
     -> spec_fn(⟦enter_new_post⟧) -> bool
 {
     |res:⟦enter_new_post⟧| {
         res.log.len() == reply.next_index &&
-        res.log.last() == reply.state &&
+        def_last(res.log) == reply.state &&
+        reply.accepted_epoch < args &&
         holds(res.Hacc, ⟨is_accepted_upper_bound⟩(a.γsrv, res.log, reply.accepted_epoch, args)) &&
         holds(res.Hprop_lb, ⟨is_proposal_lb⟩(a.γsys, reply.accepted_epoch, res.log)) &&
         holds(res.Hprop_facts, ⟨is_proposal_facts⟩(a.config, a.γsys, reply.accepted_epoch, res.log)) &&
@@ -2624,18 +2629,22 @@ impl ProposerState {
     }
 
     spec fn inv(self) -> bool {
-        self.log.last() == self.state && self.log.len() == self.next_index
+        def_last(self.log) == self.state && self.log.len() == self.next_index
     }
 }
 
-type ⟦own_proposer⟧ = ⟦∗⟧<Pure, ⟦∗⟧<⟦is_repl_inv⟧, ⟦own_leader_ghost⟧>>;
+tracked struct ⟦own_proposer⟧ {
+    Hrepl_inv: ⟦is_repl_inv⟧,
+    Hvote_inv: ⟦is_vote_inv⟧,
+    Hown: ⟦∨⟧<Pure, ⟦own_leader_ghost⟧>,
+}
 spec fn ⟨own_proposer⟩(p:Proposer, s:ProposerState) -> spec_fn(⟦own_proposer⟧) -> bool {
-    ⟨∗⟩(⌜ s.inv() ⌝,
-        ⟨∗⟩(
-            ⟨is_repl_inv⟩(p.config, p.γsys),
-            ⟨own_leader_ghost⟩(p.config, p.γsys, s.st())
-        )
-    )
+    |res:⟦own_proposer⟧| {
+        s.inv() &&
+        holds(res.Hrepl_inv, ⟨is_repl_inv⟩(p.config, p.γsys)) &&
+        holds(res.Hvote_inv, ⟨is_vote_inv⟩(p.config, p.γsys)) &&
+        holds(res.Hown, ⟨∨⟩(⌜ !s.is_leader ⌝, ⟨own_leader_ghost⟩(p.config, p.γsys, s.st())))
+    }
 }
 
 pub struct Proposer {
@@ -2662,6 +2671,72 @@ pub struct Committer<'a> {
     p: &'a Proposer
 }
 
+proof fn update_acc_ubs_epoch(
+    log: Seq<EntryType>,
+    accepted_epoch: u64,
+    accepted_epoch_p: u64,
+    final_epoch: u64,
+    tracked Haccs: ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_upper_bound⟧>)
+    -> (tracked ret: ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_upper_bound⟧>)
+requires
+  accepted_epoch_p > accepted_epoch,
+  accepted_epoch_p < final_epoch,
+  holds(Haccs, ⟨[∗ set]⟩(
+      Haccs.contents.dom(), |γsrv|{ ⟨is_accepted_upper_bound⟩(γsrv, log, accepted_epoch, final_epoch)})),
+ensures
+  holds(ret, ⟨[∗ set]⟩(
+      Haccs.contents.dom(), |γsrv|{ ⟨is_accepted_upper_bound⟩(γsrv, Seq::empty(), accepted_epoch_p, final_epoch)})),
+decreases Haccs.contents.dom().len()
+{
+    let tracked mut Haccs = Haccs;
+    if Haccs.contents.dom().len() == 0 {
+        Haccs.contents.dom().lemma_len0_is_empty();
+        return ⟦[∗ set]⟧{ contents: Map::tracked_empty() };
+    }
+
+    let γsrv = Haccs.contents.dom().choose();
+    let tracked Hacc_one = accepted_upper_bound_mono_epoch(
+        γsrv, log, accepted_epoch,
+        accepted_epoch_p, final_epoch, Haccs.contents.tracked_remove(γsrv)
+    );
+    let tracked mut Hret = update_acc_ubs_epoch(log, accepted_epoch, accepted_epoch_p, final_epoch, Haccs);
+    Hret.contents.tracked_insert(γsrv, Hacc_one);
+    return Hret;
+}
+
+proof fn update_acc_ubs_log(
+    log: Seq<EntryType>,
+    log_p: Seq<EntryType>,
+    accepted_epoch: u64,
+    final_epoch: u64,
+    tracked Haccs: ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_upper_bound⟧>,
+)
+-> (tracked ret: ⟦[∗ set]⟧<mp_server_names, ⟦is_accepted_upper_bound⟧>)
+requires
+  holds(Haccs, ⟨[∗ set]⟩(
+      Haccs.contents.dom(), |γsrv|{ ⟨is_accepted_upper_bound⟩(γsrv, log, accepted_epoch, final_epoch)})),
+  log.is_prefix_of(log_p)
+ensures
+  holds(ret, ⟨[∗ set]⟩(
+      Haccs.contents.dom(), |γsrv|{ ⟨is_accepted_upper_bound⟩(γsrv, log_p, accepted_epoch, final_epoch)})),
+decreases Haccs.contents.dom().len()
+{
+    let tracked mut Haccs = Haccs;
+    if Haccs.contents.dom().len() == 0 {
+        Haccs.contents.dom().lemma_len0_is_empty();
+        return ⟦[∗ set]⟧{ contents: Map::tracked_empty() };
+    }
+
+    let γsrv = Haccs.contents.dom().choose();
+    let tracked Hacc_one = accepted_upper_bound_mono_log(
+        γsrv, log, log_p, accepted_epoch,
+        final_epoch, Haccs.contents.tracked_remove(γsrv)
+    );
+    let tracked mut Hret = update_acc_ubs_log(log, log_p, accepted_epoch, final_epoch, Haccs);
+    Hret.contents.tracked_insert(γsrv, Hacc_one);
+    return Hret;
+}
+
 impl Proposer {
     spec fn inv(self) -> bool {
         forall |s| #[trigger] self.mu.get_pred()(s) <==> proposer_inv(self, s.0, s.1@)
@@ -2677,6 +2752,183 @@ impl Proposer {
             res: res,
             p: self,
         });
+    }
+
+    fn try_become_leader(&self)
+        requires self.inv()
+    {
+        let (mut s, Tracked(Hfull)) = self.mu.lock();
+        if s.is_leader {
+            self.mu.unlock((s, Tracked(Hfull)));
+            return
+        }
+
+        let mut num_successes = 0u64;
+        assume((s.epoch as nat) < u64::MAX);
+        s.epoch = s.epoch + 1;
+        s.is_leader = false;
+        let args = s.epoch;
+        let clerks = s.clerks;
+        proof { Hfull.Hown = ⟦∨⟧::Left(Pure{}); }
+        let tracked Hinv = Hfull.Hvote_inv.dup();
+        self.mu.unlock((s, Tracked(Hfull)));
+
+        let mut i : usize = 0;
+
+        let ghost config = self.config;
+        let mut latest_reply = EnterNewEpochReply{
+            err: 1,
+            accepted_epoch: 0,
+            next_index: 0,
+            state: 0,
+        };
+
+        let ghost mut W = Set::empty();
+        let ghost mut latest_log = Seq::empty();
+        let tracked Haccs = ⟦[∗ set]⟧::<mp_server_names, ⟦is_accepted_upper_bound⟧>{
+            contents: Map::tracked_empty()
+        };
+        let tracked Hvotes = ⟦[∗ set]⟧::<mp_server_names, ⟦own_vote_tok⟧>{
+            contents: Map::tracked_empty()
+        };
+        let tracked Hprop_facts = ⟦∨⟧::Left(Pure{});
+        let tracked Hprop_lb = ⟦∨⟧::Left(Pure{});
+
+        while i < NUM_REPLICAS as usize
+            invariant
+              0 <= i <= NUM_REPLICAS,
+              0 <= num_successes <= i,
+
+              W.finite(),
+              W.subset_of(config.take(i as int).to_set()),
+              W.len() == num_successes,
+              num_successes > 0 ==> (latest_reply.err == ENone),
+              latest_reply.err == ENone ==> (latest_reply.next_index == latest_log.len()),
+              latest_reply.err == ENone ==> (latest_reply.accepted_epoch < args),
+              latest_reply.err == ENone ==> (
+                  latest_reply.state == if latest_log.len() > 0 { latest_log.last() } else { 0 }
+              ),
+              holds(Hprop_lb, ⟨∨⟩(⌜ latest_reply.err != ENone ⌝, ⟨is_proposal_lb⟩(self.γsys, latest_reply.accepted_epoch, latest_log))),
+              holds(Hprop_facts, ⟨∨⟩(⌜ latest_reply.err != ENone ⌝, ⟨is_proposal_facts⟩(self.config, self.γsys, latest_reply.accepted_epoch, latest_log))),
+              holds(Haccs, ⟨[∗ set]⟩(
+                  W, |γsrv|{ ⟨is_accepted_upper_bound⟩(γsrv, latest_log, latest_reply.accepted_epoch, args)})),
+              holds(Hvotes, ⟨[∗ set]⟩(W, |γsrv|{ ⟨own_vote_tok⟩(γsrv, args)})),
+        {
+            let (reply, Tracked(Hpost)) = clerks[i].enter_new_epoch(args);
+            proof {
+                lemma_seq_properties::<mp_server_names>();
+                lemma_set_properties::<mp_server_names>();
+            }
+
+            if reply.err == ENone {
+                let tracked Hpost = if let ⟦∨⟧::Right(Hpost) = Hpost { Hpost } else { false_to_anything() };
+                num_successes += 1;
+                proof { W = W.insert(config[i as int]); }
+                if latest_reply.err != 0 {
+                    latest_reply.err = ENone;
+                    latest_reply = reply;
+                    proof {
+                        latest_log = Hpost.log;
+                        Hprop_lb = ⟦∨⟧::Right(Hpost.Hprop_lb);
+                        Hprop_facts = ⟦∨⟧::Right(Hpost.Hprop_facts);
+                        Haccs.contents.tracked_insert(config[i as int], Hpost.Hacc);
+                        Hvotes.contents.tracked_insert(config[i as int], Hpost.Hvote);
+                    }
+                } else if latest_reply.accepted_epoch < reply.accepted_epoch {
+                    proof {
+                        Haccs = update_acc_ubs_epoch(
+                            latest_log, latest_reply.accepted_epoch, reply.accepted_epoch,
+                            args, Haccs);
+                        Haccs = update_acc_ubs_log(
+                            Seq::empty(), Hpost.log, reply.accepted_epoch, args,
+                            Haccs
+                        );
+                        latest_log = Hpost.log;
+                        Hprop_lb = ⟦∨⟧::Right(Hpost.Hprop_lb);
+                        Hprop_facts = ⟦∨⟧::Right(Hpost.Hprop_facts);
+                        Haccs.contents.tracked_insert(config[i as int], Hpost.Hacc);
+                        Hvotes.contents.tracked_insert(config[i as int], Hpost.Hvote);
+                    }
+                    latest_reply = reply;
+                } else if latest_reply.accepted_epoch == reply.accepted_epoch &&
+                    latest_reply.next_index < reply.next_index {
+                    proof {
+                        let tracked Hlb_old = if let ⟦∨⟧::Right(H) = Hprop_lb { H } else { false_to_anything() };
+                        mlist_ptsto_lb_comparable(&Hlb_old, &Hpost.Hprop_lb.dup());
+                        Haccs = update_acc_ubs_log(
+                            latest_log, Hpost.log, reply.accepted_epoch, args,
+                            Haccs
+                        );
+                        latest_log = Hpost.log;
+                        Hprop_lb = ⟦∨⟧::Right(Hpost.Hprop_lb);
+                        Hprop_facts = ⟦∨⟧::Right(Hpost.Hprop_facts);
+                        Haccs.contents.tracked_insert(config[i as int], Hpost.Hacc);
+                        Hvotes.contents.tracked_insert(config[i as int], Hpost.Hvote);
+                    }
+                    latest_reply = reply;
+                } else {
+                    proof {
+                        let tracked mut Hacc = Hpost.Hacc;
+                        // BUG(verus): inlining this inequality gives error
+                        let b = reply.accepted_epoch < latest_reply.accepted_epoch;
+                        if b {
+                            Hacc = accepted_upper_bound_mono_epoch(
+                                config[i as int], Hpost.log, reply.accepted_epoch,
+                                latest_reply.accepted_epoch, args, Hacc
+                            );
+                            Hacc = accepted_upper_bound_mono_log(
+                                config[i as int], Seq::empty(), latest_log,
+                                latest_reply.accepted_epoch, args, Hacc
+                            );
+                        } else {
+                            let tracked Hlb_old = if let ⟦∨⟧::Right(H) = Hprop_lb.dup() { H } else { false_to_anything() };
+                            mlist_ptsto_lb_comparable(&Hlb_old, &Hpost.Hprop_lb.dup());
+                            Hacc = accepted_upper_bound_mono_log(
+                                config[i as int], Hpost.log, latest_log,
+                                latest_reply.accepted_epoch, args, Hacc
+                            );
+                        }
+                        // assert(Hpost.log)
+                        Haccs.contents.tracked_insert(config[i as int], Hacc);
+                        Hvotes.contents.tracked_insert(config[i as int], Hpost.Hvote);
+                    }
+                }
+                
+            }
+            i += 1;
+        }
+
+        if 2*num_successes > NUM_REPLICAS {
+            // have a quorum
+            let (mut s, Tracked(Hfull)) = self.mu.lock();
+            if s.epoch <= args {
+                let Et = untrusted_gen_inv_mask();
+                let Tracked(Hlc) = get_lc();
+                proof {
+                    let tracked mut E = Et.get();
+                    Hfull.Hown = ⟦∨⟧::Right(become_leader(
+                        &mut E, self.config, self.γsys, W, latest_log,
+                        latest_reply.accepted_epoch, args, Hlc,
+                        Hinv, Haccs,
+                        if let ⟦∨⟧::Right(H) = Hprop_lb { H } else { false_to_anything() },
+                        if let ⟦∨⟧::Right(H) = Hprop_facts { H } else { false_to_anything() },
+                        Hvotes
+                    ));
+                    s.log = latest_log;
+                    assert(E@ == ⊤);
+                }
+                s.epoch = args;
+                s.is_leader = true;
+                s.next_index = latest_reply.next_index;
+                s.state = latest_reply.state;
+                assert(
+                    holds(Hfull, ⟨own_proposer⟩(*self, s))
+                );
+                self.mu.unlock((s, Tracked(Hfull)));
+            } else {
+                self.mu.unlock((s, Tracked(Hfull)));
+            }
+        }
     }
 }
 
@@ -2734,14 +2986,16 @@ impl<'a> Committer<'a> {
     {
         broadcast use Finite::set_is_finite; // XXX: needed for big_sepS
         let mut s = self.s;
-        let mut res = self.res;
+        let Tracked(Hfull) = self.res;
         if !s.is_leader {
-            self.p.mu.unlock((s, res));
+            self.p.mu.unlock((s, Tracked(Hfull)));
             return (ENotLeader, Tracked(⟦∨⟧::Left(Pure{})));
         }
-        let tracked Hown = res.get();
-        let tracked (_, (mut Hown)) = Hown;
-        let tracked (mut Hinv, mut Hown) = Hown;
+        let tracked Hinv = Hfull.Hrepl_inv.dup();
+        let tracked Hown = match Hfull.Hown {
+            ⟦∨⟧::Left(_) => { false_to_anything() }
+            ⟦∨⟧::Right(Hown) => { Hown }
+        };
         let Tracked(Hlc) = get_lc();
 
         // propose new operation
@@ -2776,8 +3030,8 @@ impl<'a> Committer<'a> {
         };
         let clerks = s.clerks;
 
-        let tracked Hown = (Pure{}, (Hinv.dup(), Hown));
-        self.p.mu.unlock((s, Tracked(Hown)));
+        proof { Hfull.Hown = ⟦∨⟧::Right(Hown); }
+        self.p.mu.unlock((s, Tracked(Hfull)));
 
         let mut i : usize = 0;
 

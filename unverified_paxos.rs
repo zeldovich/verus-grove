@@ -170,7 +170,7 @@ impl Proposer {
             accepted_epoch: 0,
             next_index: 0,
             state: 0,
-        }
+        };
         while i < NUM_REPLICAS as usize
             invariant
               0 <= i <= NUM_REPLICAS,
@@ -181,9 +181,11 @@ impl Proposer {
                 num_successes += 1;
                 if latest_reply.err != 0 {
                     latest_reply = reply
-                } else if latest_reply.accepted_epoch < reply.accepted_epoch {
+                } else if
+                    latest_reply.accepted_epoch < reply.accepted_epoch {
                     latest_reply = reply
-                } else if latest_reply.next_index < reply.next_index {
+                } else if latest_reply.accepted_epoch == reply.accepted_epoch &&
+                    latest_reply.next_index < reply.next_index {
                     latest_reply = reply
                 }
             }
@@ -196,7 +198,6 @@ impl Proposer {
             if s.epoch <= args.epoch {
                 s.epoch = args.epoch;
                 s.is_leader = true;
-                s.accepted_epoch = s.epoch;
                 s.next_index = latest_reply.next_index;
                 s.state = latest_reply.state;
             }
