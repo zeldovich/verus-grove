@@ -3111,3 +3111,7 @@ impl<'a> Committer<'a> {
 
 fn main() {}
 }
+
+
+verus! {
+}

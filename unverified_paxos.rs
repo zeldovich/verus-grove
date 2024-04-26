@@ -146,7 +146,6 @@ impl Proposer {
 
 
     fn try_become_leader(&self)
-        requires self.inv()
     {
         let (mut s, mut res) = self.mu.lock();
         if s.is_leader {
@@ -164,7 +163,6 @@ impl Proposer {
 
         let mut i : usize = 0;
 
-        let ghost config = self.config;
         let mut latest_reply = EnterNewEpochReply{
             err: 1,
             accepted_epoch: 0,
@@ -172,9 +170,6 @@ impl Proposer {
             state: 0,
         };
         while i < NUM_REPLICAS as usize
-            invariant
-              0 <= i <= NUM_REPLICAS,
-              0 <= num_successes <= i,
         {
             let reply = clerks[i].enter_new_epoch(args);
             if reply.err == ENone {
@@ -237,9 +232,6 @@ impl<'a> Committer<'a> {
 
         let ghost config = self.p.config;
         while i < NUM_REPLICAS as usize
-            invariant
-              0 <= i <= NUM_REPLICAS,
-              0 <= num_successes <= i,
         {
             let reply = clerks[i].apply(args, Tracked(Hrpc_pre.dup()));
             if reply == ENone {
