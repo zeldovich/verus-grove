@@ -12,7 +12,7 @@ verus! {
     }
 
     spec fn gen_kv_lock_pred<P,C,Pred: InvariantPredicate<C, (P,Map<u64,u64>)>>
-        (c:C) -> FnSpec(KvMapInner<P>) -> bool {
+        (c:C) -> spec_fn(KvMapInner<P>) -> bool {
         |st:KvMapInner<P>|
         Pred::inv(c, (st.res@, st.m@))
     }
@@ -62,7 +62,7 @@ verus! {
         // }
         //
         // res:P
-        // Pred : FnSpec(res:P, σ:state) -> bool
+        // Pred : spec_fn(res:P, σ:state) -> bool
         // 
         // (res.x.state == σ)
         //
@@ -100,7 +100,7 @@ verus! {
         pub fn get_and_put_hocap<PhiRes, // F: FnOnce(Tracked<P>, Ghost<Map<u64,u64>>) -> Tracked<(P, PhiRes)>>
                                  Au: AtomicUpdate<Map<u64,u64>, P, (), (P, PhiRes)>>
             (&self, k:u64, v:u64, Tracked(au):Tracked<Au>,
-             phiPred: Ghost<FnSpec(u64, PhiRes) ->  bool>, // XXX: curry?
+             phiPred: Ghost<spec_fn(u64, PhiRes) ->  bool>, // XXX: curry?
             ) -> (ret:(u64, Tracked<PhiRes>))
 
             requires
@@ -169,8 +169,8 @@ verus! {
 
     type PhiRes<R> = Or<R,()>;
 
-    // phiPred: (FnSpec(bool, PhiRes) ->  bool)
-    spec fn phi_pred<R>() -> FnSpec(u64, PhiRes<R>) -> bool {
+    // phiPred: (spec_fn(bool, PhiRes) ->  bool)
+    spec fn phi_pred<R>() -> spec_fn(u64, PhiRes<R>) -> bool {
         |ret:u64, res:PhiRes<R>| {
             match res {
                 Or::Left(_) => true,

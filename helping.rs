@@ -74,7 +74,7 @@ verus! {
     }
 
     spec fn gen_val_pred<C, P, Pred: InvariantPredicate<C, (u64, P)>>(c:C) ->
-        FnSpec((u64, Tracked<P>)) -> bool {
+        spec_fn((u64, Tracked<P>)) -> bool {
         |args:(u64, Tracked<_>)| -> bool {
             let (val, p) = args;
             Pred::inv(c, (val, p@))
@@ -85,7 +85,7 @@ verus! {
     // it, but then we can't set triggers as we want. Maybe introduce an
     // abstraction of a "valid fupd"?
     spec fn gen_plist_pred<C,P,Pred:InvariantPredicate<C, (u64, P)>>(c:C) ->
-        FnSpec((WriteRequest, Tracked<Option<RequestResources<P>>>)) -> bool {
+        spec_fn((WriteRequest, Tracked<Option<RequestResources<P>>>)) -> bool {
             // XXX: why so is much type annotation needed?
         |args: (WriteRequest, Tracked<Option<RequestResources<P>>>)| {
             ((args.1@ == None::<RequestResources<P>>) ==> args.0.state == UNUSED) &&
@@ -141,7 +141,7 @@ verus! {
         fn read
             <Phi, Au:AtomicUpdate<u64, P, (), (P, Phi)>>
             (&self, Tracked(au):Tracked<Au>,
-             phi_pred: FnSpec(u64, Phi) -> bool
+             phi_pred: spec_fn(u64, Phi) -> bool
             ) -> (ret:(u64, Tracked<Phi>))
             requires self.inv(),
             (forall |v:u64, p:P|

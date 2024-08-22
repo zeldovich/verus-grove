@@ -18,9 +18,9 @@ verus! {
 
     // model for `dyn for<'a> Fn(&'a Args) -> Output`
     #[verifier::external_body]
-    pub struct DynRefFn<
-            #[verifier::reject_recursive_types] Args: ?Sized,
-            #[verifier::reject_recursive_types] Output>
+    #[verifier::reject_recursive_types(Args)]
+    #[verifier::reject_recursive_types(Output)]
+    pub struct DynRefFn<Args: ?Sized, Output>
     {
         x:Box<dyn (for<'a> Fn((&'a Args,)) -> Output) + Sync + Send>,
     }

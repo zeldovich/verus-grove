@@ -23,8 +23,12 @@ verus! {
                           Tracked<GhostMapPointsTo<u64,u64>>,
                           Tracked<GhostMapPointsTo<u64,u64>>))
             ensures 
-                    (ret.1@ == GhostMapPointsTo{k:0u64, v:0u64, id:ret.0.id@}),
-                    (ret.2@ == GhostMapPointsTo{k:1u64, v:0u64, id:ret.0.id@}),
+                    (ret.1@.k == 0u64),
+                    (ret.1@.v == 0u64),
+                    (ret.1@.gname() == ret.0.id@),
+                    (ret.2@.k == 1u64),
+                    (ret.2@.v == 0u64),
+                    (ret.2@.gname() == ret.0.id@),
                     ret.0.inv(),
         {
             let r = KvState::new();
@@ -39,7 +43,7 @@ verus! {
         fn get(&self, k:u64, Tracked(ptsto):Tracked<&GhostMapPointsTo<u64,u64>>) -> (result:u64)
             requires
                 self.inv(),
-                ptsto.id == self.id@,
+                ptsto.gname() == self.id@,
                 ptsto.k == k,
                 
             ensures (ptsto.v == result)
@@ -53,10 +57,13 @@ verus! {
         fn put(&self, k:u64, v:u64, Tracked(ptsto):Tracked<&mut GhostMapPointsTo<u64,u64>>)
             requires
                 self.inv(),
-                old(ptsto).id == self.id@,
+                old(ptsto).gname() == self.id@,
                 old(ptsto).k == k,
 
-            ensures (ptsto == GhostMapPointsTo{k:k, v:v, id:self.id@}),
+            ensures
+                    (ptsto.gname() == self.id@),
+                    (ptsto.k == k),
+                    (ptsto.v == v),
         {
             let mut a = self.s.lock();
             a.put(k, v, Tracked(ptsto));
