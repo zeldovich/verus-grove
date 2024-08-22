@@ -18,7 +18,8 @@ pub trait SessionType /* : DualType */ {
 }
 
 #[verifier(external_body)]
-pub struct SessionId<#[verifier::reject_recursive_types] T> {
+#[verifier::reject_recursive_types(T)]
+pub struct SessionId<T> {
     _unused:std::marker::PhantomData<T>
 }
 
@@ -71,7 +72,8 @@ impl SessionType for SessEnd {
 }
 
 #[verifier(external_body)]
-pub struct Channel<#[verifier::reject_recursive_types] T:SessionType> {
+#[verifier::reject_recursive_types(T)]
+pub struct Channel<T:SessionType> {
     _unused:std::marker::PhantomData<T>
 }
 

@@ -739,7 +739,7 @@ struct mp_server_names {
 
 trait Finite {
     broadcast proof fn set_is_finite(s:Set<Self>) where Self: std::marker::Sized
-        ensures s.finite();
+        ensures #[trigger] s.finite();
 }
 
 impl Finite for u64 {
